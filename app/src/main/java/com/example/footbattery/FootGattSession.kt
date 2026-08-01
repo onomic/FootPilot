@@ -165,7 +165,7 @@ class FootGattSession(
         }
     }
 
-    /** Query, optional set, typed final query, then battery read. */
+    /** Initial typed query, or optional set plus typed final query, then battery read. */
     suspend fun changeStandby(requested: StandbyState): StandbyTransactionRead =
         transactionMutex.withLock {
             require(requested != StandbyState.UNKNOWN)

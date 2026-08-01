@@ -38,8 +38,9 @@ interface StandbyTransactionTransport {
 }
 
 /**
- * Query, optional set, typed final query, then battery. A missing SET response is not treated as
- * a rejected command because the write callback has already succeeded by that point.
+ * An initial typed query that already matches is sufficient confirmation. Otherwise, set, issue a
+ * typed final query, then read battery. A missing SET response is not treated as a rejected command
+ * because the write callback has already succeeded by that point.
  */
 object StandbyTransaction {
     suspend fun execute(
@@ -64,7 +65,9 @@ object StandbyTransaction {
         }
 
         var setWriteAccepted = false
-        if (initial != requested) {
+        val finalState = if (initial == requested) {
+            initial
+        } else {
             when (val result = transport.exchange(
                 StandbyProtocol.setCommand(requested),
                 StandbyResponseKind.SET,
@@ -77,24 +80,24 @@ object StandbyTransaction {
                     error = "Standby command write failed: ${result.message}"
                 )
             }
-        }
 
-        val finalResult = transport.exchange(
-            StandbyProtocol.queryCommand(),
-            StandbyResponseKind.QUERY
-        )
-        val finalState = when (finalResult) {
-            is StandbyCommandExchangeResult.Response -> finalResult.response.state
-            is StandbyCommandExchangeResult.WriteFailed -> return finalQueryFailure(
-                requested,
-                setWriteAccepted,
-                finalResult.message
+            val finalResult = transport.exchange(
+                StandbyProtocol.queryCommand(),
+                StandbyResponseKind.QUERY
             )
-            is StandbyCommandExchangeResult.ResponseMissing -> return finalQueryFailure(
-                requested,
-                setWriteAccepted,
-                finalResult.message
-            )
+            when (finalResult) {
+                is StandbyCommandExchangeResult.Response -> finalResult.response.state
+                is StandbyCommandExchangeResult.WriteFailed -> return finalQueryFailure(
+                    requested,
+                    setWriteAccepted,
+                    finalResult.message
+                )
+                is StandbyCommandExchangeResult.ResponseMissing -> return finalQueryFailure(
+                    requested,
+                    setWriteAccepted,
+                    finalResult.message
+                )
+            }
         }
 
         val battery = transport.readBattery()

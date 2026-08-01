@@ -7,6 +7,56 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StandbyTransactionTest {
+    @Test fun initialQueryAlreadyRequestedSkipsSetAndFinalQuery() = runBlocking {
+        val transport = FakeTransport(
+            exchangeSteps = listOf(notifications(query(StandbyState.ON))),
+            battery = StandbyBatteryReadResult.Success(82)
+        )
+
+        val result = StandbyTransaction.execute(StandbyState.ON, transport)
+
+        assertTrue(result.verified)
+        assertFalse(result.setWriteAccepted)
+        assertFalse(result.ambiguous)
+        assertEquals(StandbyState.ON, result.finalState)
+        assertEquals(82, result.batteryLevel)
+        assertEquals(null, result.error)
+        assertEquals(listOf(StandbyResponseKind.QUERY), transport.expectedKinds)
+        assertEquals(1, transport.batteryReads)
+
+        val reduction = SnapshotReducer.reduce(
+            SnapshotState(70, StandbyState.OFF, 100L),
+            SnapshotEvent.StandbyChange(
+                requested = StandbyState.ON,
+                finalState = result.finalState,
+                verified = result.verified,
+                batteryLevel = result.batteryLevel,
+                checkedAt = 200L,
+                ambiguous = result.ambiguous
+            )
+        )
+        assertEquals(SnapshotState(82, StandbyState.ON, 200L), reduction.snapshot)
+        assertTrue(reduction.completeSnapshotSaved)
+    }
+
+    @Test fun initialQueryAlreadyRequestedStillReturnsBatteryFailure() = runBlocking {
+        val transport = FakeTransport(
+            exchangeSteps = listOf(notifications(query(StandbyState.OFF))),
+            battery = StandbyBatteryReadResult.Failed("Battery check failed")
+        )
+
+        val result = StandbyTransaction.execute(StandbyState.OFF, transport)
+
+        assertTrue(result.verified)
+        assertFalse(result.setWriteAccepted)
+        assertFalse(result.ambiguous)
+        assertEquals(StandbyState.OFF, result.finalState)
+        assertEquals(null, result.batteryLevel)
+        assertEquals("Battery check failed", result.batteryError)
+        assertEquals(listOf(StandbyResponseKind.QUERY), transport.expectedKinds)
+        assertEquals(1, transport.batteryReads)
+    }
+
     @Test fun acceptedWriteSetResponseAndFinalQueryVerifyRequestedState() = runBlocking {
         val transport = FakeTransport(
             exchangeSteps = listOf(
