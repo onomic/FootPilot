@@ -47,6 +47,13 @@ If a standby change is confirmed but its follow-up battery read fails, the confi
 is retained across app restarts. The app marks the battery as not yet verified after that change and
 continues to label the preserved timestamp as the last complete check until a full check succeeds.
 
+After Android accepts a standby write, a missing SET confirmation is resolved with a final typed
+QUERY response; delayed SET responses cannot satisfy that query. If the final state still cannot be
+verified, the app persists and displays an ambiguous standby state instead of retaining a potentially
+wrong ON/OFF value. The standby switch and notification standby action stay disabled until **Check
+now** restores a complete confirmed snapshot. Transient operation results remain visible for their
+full display period even when live battery notifications refresh the battery line.
+
 ## Make background alerts reliable
 
 Android (especially Samsung/Xiaomi/OnePlus) may kill background Bluetooth to save power,

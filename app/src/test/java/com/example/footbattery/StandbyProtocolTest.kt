@@ -2,6 +2,7 @@ package com.example.footbattery
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -29,24 +30,39 @@ class StandbyProtocolTest {
     }
 
     @Test fun validQueryResponseOff() {
-        assertEquals(StandbyState.OFF, StandbyProtocol.parseResponse(response(0xB0, 0x00)))
+        assertEquals(
+            StandbyResponse(StandbyResponseKind.QUERY, StandbyState.OFF),
+            StandbyProtocol.parseResponse(response(0xB0, 0x00))
+        )
     }
 
     @Test fun validQueryResponseOn() {
-        assertEquals(StandbyState.ON, StandbyProtocol.parseResponse(response(0xB0, 0x01)))
+        assertEquals(
+            StandbyResponse(StandbyResponseKind.QUERY, StandbyState.ON),
+            StandbyProtocol.parseResponse(response(0xB0, 0x01))
+        )
     }
 
     @Test fun validSetResponseOff() {
-        assertEquals(StandbyState.OFF, StandbyProtocol.parseResponse(response(0xB1, 0x00)))
+        assertEquals(
+            StandbyResponse(StandbyResponseKind.SET, StandbyState.OFF),
+            StandbyProtocol.parseResponse(response(0xB1, 0x00))
+        )
     }
 
     @Test fun validSetResponseOn() {
-        assertEquals(StandbyState.ON, StandbyProtocol.parseResponse(response(0xB1, 0x01)))
+        assertEquals(
+            StandbyResponse(StandbyResponseKind.SET, StandbyState.ON),
+            StandbyProtocol.parseResponse(response(0xB1, 0x01))
+        )
     }
 
     @Test fun trailingBytesAreIgnored() {
         val payload = response(0xB1, 0x01) + byteArrayOf(0x55, 0x66, 0x77)
-        assertEquals(StandbyState.ON, StandbyProtocol.parseResponse(payload))
+        assertEquals(
+            StandbyResponse(StandbyResponseKind.SET, StandbyState.ON),
+            StandbyProtocol.parseResponse(payload)
+        )
     }
 
     @Test fun shorterThanSevenBytesIsRejected() {
@@ -70,6 +86,22 @@ class StandbyProtocolTest {
     @Test fun unrelatedAa01NotificationIsRejected() {
         val payload = response(0xB0, 0x01).also { it[5] = 0x90.toByte() }
         assertNull(StandbyProtocol.parseResponse(payload))
+    }
+
+    @Test fun responseMatchingRequiresTheExpectedFamilyAndOptionalState() {
+        val queryOn = StandbyResponse(StandbyResponseKind.QUERY, StandbyState.ON)
+        val setOn = StandbyResponse(StandbyResponseKind.SET, StandbyState.ON)
+        val setOff = StandbyResponse(StandbyResponseKind.SET, StandbyState.OFF)
+
+        assertFalse(StandbyProtocol.matches(setOn, StandbyResponseKind.QUERY))
+        assertFalse(StandbyProtocol.matches(queryOn, StandbyResponseKind.SET))
+        assertFalse(
+            StandbyProtocol.matches(setOff, StandbyResponseKind.SET, StandbyState.ON)
+        )
+        assertEquals(
+            true,
+            StandbyProtocol.matches(setOn, StandbyResponseKind.SET, StandbyState.ON)
+        )
     }
 
     private fun response(first: Int, state: Int) = byteArrayOf(

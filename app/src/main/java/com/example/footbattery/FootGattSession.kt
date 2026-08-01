@@ -33,17 +33,6 @@ data class FullSnapshotRead(
     val standbyError: String? = null
 )
 
-data class StandbyTransactionRead(
-    val requested: StandbyState,
-    val verified: Boolean,
-    val finalState: StandbyState?,
-    val batteryLevel: Int?,
-    val ambiguous: Boolean,
-    val error: String?,
-    val batteryError: String? = null,
-    val setCommandSent: Boolean = false
-)
-
 /**
  * One callback-driven GATT client. Android permits only one outstanding GATT operation;
  * [operationMutex] plus the matching callback deferred enforce that rule for every read,
@@ -70,7 +59,7 @@ class FootGattSession(
         val deferred: CompletableDeferred<GattResult>
     )
 
-    private class ResponseTimeout(val observed: StandbyState?) : Exception()
+    private class ResponseTimeout(val observed: StandbyResponse?) : Exception()
 
     private val appContext = context.applicationContext
     private val operationMutex = Mutex()
@@ -141,7 +130,12 @@ class FootGattSession(
         var standby: StandbyState? = null
         var standbyError: String? = null
         try {
-            standby = sendCommandAndAwait(StandbyProtocol.queryCommand(), expected = null)
+            standby = requireResponse(
+                exchangeStandby(
+                    StandbyProtocol.queryCommand(),
+                    StandbyResponseKind.QUERY
+                )
+            ).state
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -171,78 +165,32 @@ class FootGattSession(
         }
     }
 
-    /** Query, optional set, matching set confirmation, final query, then battery read. */
+    /** Query, optional set, typed final query, then battery read. */
     suspend fun changeStandby(requested: StandbyState): StandbyTransactionRead =
         transactionMutex.withLock {
             require(requested != StandbyState.UNKNOWN)
             ensureUsable()
-
-            val initial = try {
-                sendCommandAndAwait(StandbyProtocol.queryCommand(), expected = null)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                return@withLock StandbyTransactionRead(
-                    requested, verified = false, finalState = null, batteryLevel = null,
-                    ambiguous = false, error = e.userMessage("Could not verify standby")
-                )
-            }
-
-            val setAttempted = initial != requested
-            if (setAttempted) {
-                try {
-                    sendCommandAndAwait(StandbyProtocol.setCommand(requested), expected = requested)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    return@withLock StandbyTransactionRead(
-                        requested, verified = false, finalState = null, batteryLevel = null,
-                        ambiguous = true, error = e.userMessage("Standby change was not confirmed"),
-                        setCommandSent = true
+            StandbyTransaction.execute(
+                requested,
+                object : StandbyTransactionTransport {
+                    override suspend fun exchange(
+                        command: ByteArray,
+                        expectedKind: StandbyResponseKind,
+                        expectedState: StandbyState?
+                    ): StandbyCommandExchangeResult = exchangeStandby(
+                        command,
+                        expectedKind,
+                        expectedState
                     )
+
+                    override suspend fun readBattery(): StandbyBatteryReadResult = try {
+                        StandbyBatteryReadResult.Success(readBatteryInternal())
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        StandbyBatteryReadResult.Failed(e.userMessage("Battery check failed"))
+                    }
                 }
-            }
-
-            val finalState = try {
-                sendCommandAndAwait(StandbyProtocol.queryCommand(), expected = null)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                return@withLock StandbyTransactionRead(
-                    requested,
-                    verified = false,
-                    finalState = null,
-                    batteryLevel = null,
-                    ambiguous = setAttempted,
-                    error = e.userMessage("Final standby verification failed"),
-                    setCommandSent = setAttempted
-                )
-            }
-
-            if (finalState != requested) {
-                return@withLock StandbyTransactionRead(
-                    requested, verified = false, finalState = finalState, batteryLevel = null,
-                    ambiguous = false, error = "Foot reported standby ${finalState.displayName()}",
-                    setCommandSent = setAttempted
-                )
-            }
-
-            val battery = try {
-                readBatteryInternal()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                return@withLock StandbyTransactionRead(
-                    requested, verified = true, finalState = requested, batteryLevel = null,
-                    ambiguous = false, error = null,
-                    batteryError = e.userMessage("Battery check failed"),
-                    setCommandSent = setAttempted
-                )
-            }
-
-            StandbyTransactionRead(
-                requested, verified = true, finalState = requested, batteryLevel = battery,
-                ambiguous = false, error = null, setCommandSent = setAttempted
             )
         }
 
@@ -344,32 +292,59 @@ class FootGattSession(
         return value
     }
 
-    private suspend fun sendCommandAndAwait(
+    private suspend fun exchangeStandby(
         command: ByteArray,
-        expected: StandbyState?
-    ): StandbyState {
+        expectedKind: StandbyResponseKind,
+        expectedState: StandbyState? = null
+    ): StandbyCommandExchangeResult {
         while (aa01Notifications.tryReceive().isSuccess) {
             // Drop stale responses before this command is written.
         }
-        writeAa01(command)
-
-        var observed: StandbyState? = null
         try {
-            return withTimeout(COMMAND_RESPONSE_TIMEOUT_MS) {
+            writeAa01(command)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return StandbyCommandExchangeResult.WriteFailed(
+                e.userMessage("Bluetooth command write failed")
+            )
+        }
+
+        var observed: StandbyResponse? = null
+        try {
+            val response = withTimeout(COMMAND_RESPONSE_TIMEOUT_MS) {
                 while (true) {
                     val parsed = StandbyProtocol.parseResponse(aa01Notifications.receive())
-                    if (parsed != null) {
+                    if (parsed?.kind == expectedKind) {
                         observed = parsed
-                        if (expected == null || parsed == expected) return@withTimeout parsed
+                        if (StandbyProtocol.matches(parsed, expectedKind, expectedState)) {
+                            return@withTimeout parsed
+                        }
                     }
                 }
                 @Suppress("UNREACHABLE_CODE")
                 error("unreachable")
             }
+            return StandbyCommandExchangeResult.Response(response)
         } catch (_: TimeoutCancellationException) {
-            throw ResponseTimeout(observed)
+            return StandbyCommandExchangeResult.ResponseMissing(
+                ResponseTimeout(observed).userMessage("Standby response failed")
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return StandbyCommandExchangeResult.ResponseMissing(
+                e.userMessage("Standby response failed")
+            )
         }
     }
+
+    private fun requireResponse(result: StandbyCommandExchangeResult): StandbyResponse =
+        when (result) {
+            is StandbyCommandExchangeResult.Response -> result.response
+            is StandbyCommandExchangeResult.WriteFailed -> throw BleSessionException(result.message)
+            is StandbyCommandExchangeResult.ResponseMissing -> throw BleSessionException(result.message)
+        }
 
     private suspend fun runGattOperation(
         type: OperationType,
@@ -557,7 +532,7 @@ class FootGattSession(
 
     private fun Exception.userMessage(fallback: String): String = when (this) {
         is ResponseTimeout -> if (observed == null) "$fallback: response timed out" else
-            "$fallback: foot reported ${observed.displayName()}"
+            "$fallback: foot reported ${observed.state.displayName()}"
         is BleSessionException -> message ?: fallback
         else -> fallback
     }

@@ -11,6 +11,10 @@
 > without advancing the complete snapshot timestamp. Live monitoring notifications use that live
 > battery value while standby and time remain snapshot-backed. A confirmed standby change followed
 > by battery failure is persisted as battery-pending and remains visibly incomplete after restart.
+> An accepted standby write with a missing SET confirmation proceeds to a typed final QUERY; if that
+> query cannot establish the actual state, a distinct ambiguous state survives restart, suppresses
+> standby actions, and is recoverable with Check now. Live battery refreshes preserve transient
+> operation results until their eight-second expiration.
 
 **Purpose of this document:** complete context for the FootBattery Android app so work can
 continue in a fresh session without losing any decisions or state. Last updated at the point

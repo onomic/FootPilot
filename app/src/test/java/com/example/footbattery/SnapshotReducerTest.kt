@@ -133,7 +133,7 @@ class SnapshotReducerTest {
         assertTrue(result.completeSnapshotSaved)
     }
 
-    @Test fun failedStandbyConfirmationDoesNotClaimSuccess() {
+    @Test fun oppositeFinalStateWithBatteryFailurePersistsActualStateAsPending() {
         val result = SnapshotReducer.reduce(
             previous,
             SnapshotEvent.StandbyChange(
@@ -145,12 +145,35 @@ class SnapshotReducerTest {
             )
         )
 
-        assertEquals(previous, result.snapshot)
+        assertEquals(
+            previous.copy(
+                standby = StandbyState.OFF,
+                completeness = SnapshotCompleteness.STANDBY_CONFIRMED_BATTERY_PENDING
+            ),
+            result.snapshot
+        )
         assertFalse(result.standbyChangeConfirmed)
         assertFalse(result.completeSnapshotSaved)
     }
 
-    @Test fun ambiguousStandbyFailurePreservesLastConfirmedSnapshot() {
+    @Test fun oppositeFinalStateWithBatterySuccessSavesCompleteActualSnapshot() {
+        val result = SnapshotReducer.reduce(
+            previous,
+            SnapshotEvent.StandbyChange(
+                requested = StandbyState.ON,
+                finalState = StandbyState.OFF,
+                verified = false,
+                batteryLevel = 74,
+                checkedAt = 200L
+            )
+        )
+
+        assertEquals(SnapshotState(74, StandbyState.OFF, 200L), result.snapshot)
+        assertTrue(result.completeSnapshotSaved)
+        assertFalse(result.standbyChangeConfirmed)
+    }
+
+    @Test fun ambiguousStandbyFailurePreservesBatteryAndTimeButHidesOldState() {
         val result = SnapshotReducer.reduce(
             previous,
             SnapshotEvent.StandbyChange(
@@ -163,9 +186,33 @@ class SnapshotReducerTest {
             )
         )
 
-        assertEquals(previous, result.snapshot)
+        assertEquals(
+            SnapshotState(
+                batteryLevel = 70,
+                standby = StandbyState.UNKNOWN,
+                lastChecked = 100L,
+                completeness = SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND
+            ),
+            result.snapshot
+        )
         assertFalse(result.standbyChangeConfirmed)
         assertFalse(result.completeSnapshotSaved)
+    }
+
+    @Test fun laterCompleteCheckClearsAmbiguousAfterCommandState() {
+        val ambiguous = previous.copy(
+            standby = StandbyState.UNKNOWN,
+            completeness = SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND
+        )
+
+        val result = SnapshotReducer.reduce(
+            ambiguous,
+            SnapshotEvent.NormalCheck(83, StandbyState.ON, checkedAt = 300L)
+        )
+
+        assertEquals(SnapshotState(83, StandbyState.ON, 300L), result.snapshot)
+        assertEquals(SnapshotCompleteness.COMPLETE, result.snapshot.completeness)
+        assertTrue(result.completeSnapshotSaved)
     }
 
     @Test fun missingFinalConfirmationDoesNotPersistRequestedStandby() {

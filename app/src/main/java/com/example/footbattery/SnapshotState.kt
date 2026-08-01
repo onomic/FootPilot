@@ -13,7 +13,8 @@ enum class StandbyState {
 
 enum class SnapshotCompleteness {
     COMPLETE,
-    STANDBY_CONFIRMED_BATTERY_PENDING;
+    STANDBY_CONFIRMED_BATTERY_PENDING,
+    STANDBY_STATE_UNKNOWN_AFTER_COMMAND;
 
     companion object {
         /** Standby v1 snapshots written before this field existed were complete snapshots. */
@@ -83,40 +84,39 @@ object SnapshotReducer {
         }
 
         is SnapshotEvent.StandbyChange -> {
-            val confirmed = event.verified && event.finalState == event.requested
             val battery = event.batteryLevel?.takeIf { it in 0..100 }
+            val finalState = event.finalState?.takeIf { it != StandbyState.UNKNOWN }
+            val confirmed = event.verified && finalState == event.requested
             when {
-                confirmed && battery != null -> SnapshotReduction(
+                event.ambiguous -> SnapshotReduction(
+                    snapshot = previous.copy(
+                        standby = StandbyState.UNKNOWN,
+                        completeness = SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND
+                    ),
+                    completeSnapshotSaved = false,
+                    standbyChangeConfirmed = false,
+                    freshBatteryLevel = battery
+                )
+
+                finalState != null && battery != null -> SnapshotReduction(
                     snapshot = SnapshotState(
                         battery,
-                        event.requested,
+                        finalState,
                         event.checkedAt,
                         SnapshotCompleteness.COMPLETE
                     ),
                     completeSnapshotSaved = true,
-                    standbyChangeConfirmed = true,
+                    standbyChangeConfirmed = confirmed,
                     freshBatteryLevel = battery
                 )
 
-                confirmed -> SnapshotReduction(
+                finalState != null -> SnapshotReduction(
                     snapshot = previous.copy(
-                        standby = event.requested,
+                        standby = finalState,
                         completeness = SnapshotCompleteness.STANDBY_CONFIRMED_BATTERY_PENDING
                     ),
                     completeSnapshotSaved = false,
-                    standbyChangeConfirmed = true,
-                    freshBatteryLevel = battery
-                )
-
-                event.finalState != null &&
-                    event.finalState != StandbyState.UNKNOWN &&
-                    event.finalState != previous.standby -> SnapshotReduction(
-                    snapshot = previous.copy(
-                        standby = event.finalState,
-                        completeness = SnapshotCompleteness.STANDBY_CONFIRMED_BATTERY_PENDING
-                    ),
-                    completeSnapshotSaved = false,
-                    standbyChangeConfirmed = false,
+                    standbyChangeConfirmed = confirmed,
                     freshBatteryLevel = battery
                 )
 

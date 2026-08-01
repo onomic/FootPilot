@@ -102,7 +102,14 @@ object FootOperations {
         BatteryRepo.ensureInitialized(app)
 
         if (BatteryRepo.snapshot.value.standby == StandbyState.UNKNOWN) {
-            val message = "Check now to verify standby"
+            val message = if (
+                BatteryRepo.snapshot.value.completeness ==
+                SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND
+            ) {
+                "Check now to restore a confirmed standby state"
+            } else {
+                "Check now to verify standby"
+            }
             BatteryRepo.standbyStatus.value = message
             Alerts.refreshApplicable(app, message)
             return FootOperationResult.Failed(message)
@@ -220,23 +227,28 @@ object FootOperations {
         if (reduction.completeSnapshotSaved) {
             Prefs.saveCompleteSnapshot(ctx, reduction.snapshot)
             BatteryRepo.applySnapshot(reduction.snapshot)
-            val message = "Standby ${requested.displayName()} confirmed"
+            val message = if (reduction.standbyChangeConfirmed) {
+                "Standby ${requested.displayName()} confirmed"
+            } else {
+                read.error ?: "Standby change failed"
+            }
             BatteryRepo.status.value = message
             BatteryRepo.standbyStatus.value = ""
-            return FootOperationResult.Complete(reduction.snapshot)
+            return if (reduction.standbyChangeConfirmed) {
+                FootOperationResult.Complete(reduction.snapshot)
+            } else {
+                FootOperationResult.Failed(message)
+            }
         }
 
         val snapshotChanged = reduction.snapshot != previous
-        if ((snapshotChanged || reduction.standbyChangeConfirmed) &&
-            reduction.snapshot.completeness ==
-            SnapshotCompleteness.STANDBY_CONFIRMED_BATTERY_PENDING
-        ) {
-            Prefs.savePendingSnapshot(ctx, reduction.snapshot)
-            BatteryRepo.applyPendingSnapshot(reduction.snapshot)
+        if (snapshotChanged && reduction.snapshot.completeness != SnapshotCompleteness.COMPLETE) {
+            Prefs.saveIncompleteSnapshot(ctx, reduction.snapshot)
+            BatteryRepo.applyIncompleteSnapshot(reduction.snapshot)
         }
 
         if (reduction.standbyChangeConfirmed && read.batteryLevel == null) {
-            val message = if (read.setCommandSent) {
+            val message = if (read.setWriteAccepted) {
                 "Standby changed, but battery check failed"
             } else {
                 "Standby confirmed, but battery check failed"

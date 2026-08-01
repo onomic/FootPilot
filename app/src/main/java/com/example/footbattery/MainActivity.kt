@@ -57,6 +57,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -117,7 +118,7 @@ class MainActivity : ComponentActivity() {
     private var intervalMin by mutableStateOf(60)
     private var pairingCode by mutableStateOf("")
     private var showSettings by mutableStateOf(false)
-    private var showDisconnectWarning by mutableStateOf(false)
+    private var disconnectWarningText by mutableStateOf<String?>(null)
     private var bluetoothAvailable by mutableStateOf(false)
 
     private val permLauncher = registerForActivityResult(
@@ -152,33 +153,38 @@ class MainActivity : ComponentActivity() {
                 val standbyStatus by BatteryRepo.standbyStatus.collectAsState()
                 val connectionState by BatteryRepo.connectionState.collectAsState()
                 val coordination by BleOperationCoordinator.state.collectAsState()
+                val latestRunning by rememberUpdatedState(running)
 
                 LaunchedEffect(Unit) {
-                    var wasAvailable = bluetoothAvailable
                     while (true) {
                         val available = canUseBluetooth()
                         bluetoothAvailable = available
-                        if (wasAvailable && !available && !running) {
-                            BatteryRepo.status.value = bluetoothUnavailableStatus()
+                        val nextStatus = bluetoothAvailabilityStatus(
+                            currentStatus = BatteryRepo.status.value,
+                            bluetoothAvailable = available,
+                            monitoring = latestRunning,
+                            unavailableStatus = bluetoothUnavailableStatus()
+                        )
+                        if (nextStatus != BatteryRepo.status.value) {
+                            BatteryRepo.status.value = nextStatus
                         }
-                        wasAvailable = available
                         delay(1_000L)
                     }
                 }
 
-                if (showDisconnectWarning) {
+                disconnectWarningText?.let { warning ->
                     AlertDialog(
-                        onDismissRequest = { showDisconnectWarning = false },
+                        onDismissRequest = { disconnectWarningText = null },
                         title = { Text("Disconnect monitoring?") },
-                        text = { Text("Standby will remain on after disconnecting.") },
+                        text = { Text(warning) },
                         confirmButton = {
                             TextButton(onClick = {
-                                showDisconnectWarning = false
+                                disconnectWarningText = null
                                 LiveConnection.stop()
                             }) { Text("Disconnect") }
                         },
                         dismissButton = {
-                            TextButton(onClick = { showDisconnectWarning = false }) {
+                            TextButton(onClick = { disconnectWarningText = null }) {
                                 Text("Cancel")
                             }
                         }
@@ -327,8 +333,9 @@ class MainActivity : ComponentActivity() {
 
     private fun requestStopMonitoring() {
         if (BleOperationCoordinator.isBusy()) return
-        if (BatteryRepo.snapshot.value.standby == StandbyState.ON) {
-            showDisconnectWarning = true
+        val warning = disconnectStandbyWarning(BatteryRepo.snapshot.value)
+        if (warning != null) {
+            disconnectWarningText = warning
         } else {
             LiveConnection.stop()
         }
@@ -451,12 +458,13 @@ private fun StandbyCard(
     enabled: Boolean,
     onChange: (StandbyState) -> Unit
 ) {
-    val isOn = snapshot.standby == StandbyState.ON
     val display = SnapshotPresentation.create(snapshot)
-    val stateText = when (snapshot.standby) {
-        StandbyState.ON -> "On"
-        StandbyState.OFF -> "Off"
-        StandbyState.UNKNOWN -> "Not checked"
+    val isOn = display.standby == StandbyState.ON
+    val stateText = when {
+        display.standbyAmbiguousAfterCommand -> "Not confirmed"
+        display.standby == StandbyState.ON -> "On"
+        display.standby == StandbyState.OFF -> "Off"
+        else -> "Not checked"
     }
     val checkedText = display.checkedLine(
         snapshot.lastChecked.takeIf { it > 0L }?.let {

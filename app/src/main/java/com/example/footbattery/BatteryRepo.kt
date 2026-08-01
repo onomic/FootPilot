@@ -32,7 +32,10 @@ object BatteryRepo {
         val saved = Prefs.snapshot(ctx.applicationContext)
         snapshot.value = saved
         level.value = saved.batteryLevel
-        standbyStatus.value = if (saved.standby == StandbyState.UNKNOWN) {
+        standbyStatus.value = if (
+            saved.standby == StandbyState.UNKNOWN &&
+            saved.completeness != SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND
+        ) {
             "Check now to verify standby"
         } else {
             ""
@@ -45,11 +48,10 @@ object BatteryRepo {
         standbyStatus.value = ""
     }
 
-    /** Applies confirmed standby metadata without replacing a newer live battery value. */
-    fun applyPendingSnapshot(value: SnapshotState) {
-        require(
-            value.completeness == SnapshotCompleteness.STANDBY_CONFIRMED_BATTERY_PENDING
-        )
+    /** Applies incomplete standby metadata without replacing a newer live battery value. */
+    fun applyIncompleteSnapshot(value: SnapshotState) {
+        require(value.completeness != SnapshotCompleteness.COMPLETE)
         snapshot.value = value
+        standbyStatus.value = ""
     }
 }

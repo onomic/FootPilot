@@ -32,7 +32,7 @@ object Prefs {
     fun pairingCode(ctx: Context): String = p(ctx).getString("pairing_code", "") ?: ""
     fun setPairingCode(ctx: Context, v: String) = p(ctx).edit().putString("pairing_code", v.trim()).apply()
 
-    /** Last complete battery/time plus the confirmed standby and completeness metadata. */
+    /** Last complete battery/time plus standby verification and completeness metadata. */
     fun snapshot(ctx: Context): SnapshotState {
         val prefs = p(ctx)
         val battery = if (prefs.contains(SNAPSHOT_BATTERY)) {
@@ -67,16 +67,15 @@ object Prefs {
             .apply()
     }
 
-    /**
-     * Persists a confirmed standby state while retaining the preceding complete battery/time.
-     * Known prior fields are repeated in this same editor transaction; missing legacy fields are
-     * left untouched rather than deleted.
-     */
-    fun savePendingSnapshot(ctx: Context, snapshot: SnapshotState) {
-        require(snapshot.standby != StandbyState.UNKNOWN)
-        require(
-            snapshot.completeness == SnapshotCompleteness.STANDBY_CONFIRMED_BATTERY_PENDING
-        )
+    /** Persists incomplete verification metadata while retaining complete battery/time fields. */
+    fun saveIncompleteSnapshot(ctx: Context, snapshot: SnapshotState) {
+        when (snapshot.completeness) {
+            SnapshotCompleteness.COMPLETE -> error("A complete snapshot must use saveCompleteSnapshot")
+            SnapshotCompleteness.STANDBY_CONFIRMED_BATTERY_PENDING ->
+                require(snapshot.standby != StandbyState.UNKNOWN)
+            SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND ->
+                require(snapshot.standby == StandbyState.UNKNOWN)
+        }
         val stored = SnapshotPersistence.encode(snapshot)
         val editor = p(ctx).edit()
             .putString(SNAPSHOT_STANDBY, stored.standbyName)

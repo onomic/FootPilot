@@ -13,9 +13,9 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import java.util.concurrent.atomic.AtomicInteger
 
 /** Centralized verified-snapshot notifications and low-battery alerts. */
 object Alerts {
@@ -36,7 +36,7 @@ object Alerts {
     private const val TRANSIENT_STATUS_MS = 8_000L
 
     private val handler = Handler(Looper.getMainLooper())
-    private val transientGeneration = AtomicInteger(0)
+    private val transientStatus = TransientStatusStore(TRANSIENT_STATUS_MS)
 
     fun ensureChannels(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
@@ -84,20 +84,28 @@ object Alerts {
 
     /** Immediately replaces any applicable persistent notification and suppresses actions. */
     fun showOperation(ctx: Context, text: String) {
-        transientGeneration.incrementAndGet()
+        transientStatus.beginOperation()
         postApplicable(ctx, text, includeActions = false)
     }
 
     /** Restore verified state/actions, optionally showing a temporary human-readable result. */
-    fun refreshApplicable(ctx: Context, transientStatus: String? = null) {
-        val generation = transientGeneration.incrementAndGet()
-        postApplicable(ctx, transientStatus, includeActions = actionsAreSafe(ctx))
-        if (transientStatus != null) {
+    fun refreshApplicable(ctx: Context, transientText: String? = null) {
+        val app = ctx.applicationContext
+        val now = SystemClock.elapsedRealtime()
+        val token = if (transientText != null) {
+            transientStatus.replace(transientText, now)
+        } else {
+            transientStatus.clear()
+            null
+        }
+        postResolvedApplicable(app, now)
+        if (token != null) {
             handler.postDelayed({
-                if (transientGeneration.get() == generation && !BleOperationCoordinator.isBusy()) {
-                    postApplicable(ctx.applicationContext, null, includeActions = actionsAreSafe(ctx))
+                val callbackNow = SystemClock.elapsedRealtime()
+                if (transientStatus.expire(token, callbackNow)) {
+                    postResolvedApplicable(app, callbackNow)
                 }
-            }, TRANSIENT_STATUS_MS)
+            }, (token.expiresAtMs - now).coerceAtLeast(0L))
         }
     }
 
@@ -115,17 +123,42 @@ object Alerts {
 
     /** Refreshes only the live-monitoring notification for a battery notification. */
     fun refreshLiveBattery(ctx: Context) {
-        if (!LiveConnection.isMonitoringRequested()) return
-        val statusText = BleOperationCoordinator.state.value.visibleOperation?.statusText
+        val plan = liveBatteryRefreshPlan(LiveConnection.isMonitoringRequested())
+        if (!plan.refreshOngoing) return
+        val model = resolvedModel(
+            ctx,
+            liveBatteryLevel = BatteryRepo.level.value,
+            nowMs = SystemClock.elapsedRealtime()
+        )
         val notification = buildStateNotification(
             ctx = ctx,
             ongoing = true,
-            statusText = statusText,
-            includeActions = statusText == null && actionsAreSafe(ctx),
+            statusText = model.statusText,
+            includeActions = model.includeActions,
             liveBatteryLevel = BatteryRepo.level.value
         )
         ctx.getSystemService(NotificationManager::class.java).notify(ONGOING_ID, notification)
     }
+
+    private fun postResolvedApplicable(ctx: Context, nowMs: Long) {
+        val liveBattery = BatteryRepo.level.value.takeIf {
+            LiveConnection.isMonitoringRequested()
+        }
+        val model = resolvedModel(ctx, liveBattery, nowMs)
+        postApplicable(ctx, model.statusText, model.includeActions)
+    }
+
+    private fun resolvedModel(
+        ctx: Context,
+        liveBatteryLevel: Int?,
+        nowMs: Long
+    ): StateNotificationModel = NotificationStatePresentation.create(
+        snapshot = BatteryRepo.snapshot.value,
+        liveBatteryLevel = liveBatteryLevel,
+        activeOperationText = BleOperationCoordinator.state.value.visibleOperation?.statusText,
+        transientText = transientStatus.visibleText(nowMs),
+        actionsSafe = actionsAreSafe(ctx)
+    )
 
     private fun postApplicable(ctx: Context, statusText: String?, includeActions: Boolean) {
         when {
@@ -186,16 +219,17 @@ object Alerts {
             .setOnlyAlertOnce(true)
             .setContentIntent(openApp(ctx))
 
-        if (includeActions) {
-            builder.addAction(operationAction(ctx, ACTION_CHECK_NOW, "Check now", REQUEST_CHECK_NOW))
-            when (display.standby) {
-                StandbyState.ON -> builder.addAction(
-                    operationAction(ctx, ACTION_STANDBY_OFF, "Turn standby off", REQUEST_STANDBY_OFF)
+        stateNotificationActions(display, includeActions).forEach { action ->
+            when (action) {
+                StateNotificationAction.CHECK_NOW -> builder.addAction(
+                    operationAction(ctx, ACTION_CHECK_NOW, "Check now", REQUEST_CHECK_NOW)
                 )
-                StandbyState.OFF -> builder.addAction(
+                StateNotificationAction.STANDBY_ON -> builder.addAction(
                     operationAction(ctx, ACTION_STANDBY_ON, "Turn standby on", REQUEST_STANDBY_ON)
                 )
-                StandbyState.UNKNOWN -> Unit
+                StateNotificationAction.STANDBY_OFF -> builder.addAction(
+                    operationAction(ctx, ACTION_STANDBY_OFF, "Turn standby off", REQUEST_STANDBY_OFF)
+                )
             }
         }
         return builder.build()

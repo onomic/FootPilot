@@ -10,13 +10,22 @@ data class StoredSnapshot(
 )
 
 object SnapshotPersistence {
-    fun decode(stored: StoredSnapshot): SnapshotState = SnapshotState(
-        batteryLevel = stored.batteryLevel?.takeIf { it in 0..100 },
-        standby = StandbyState.fromPersisted(stored.standbyName),
-        // Ignore a legacy battery-only timestamp until Standby v1 wrote snapshot data.
-        lastChecked = if (stored.hasCompleteSnapshotV1) stored.lastChecked else 0L,
-        completeness = SnapshotCompleteness.fromPersisted(stored.completenessName)
-    )
+    fun decode(stored: StoredSnapshot): SnapshotState {
+        val completeness = SnapshotCompleteness.fromPersisted(stored.completenessName)
+        return SnapshotState(
+            batteryLevel = stored.batteryLevel?.takeIf { it in 0..100 },
+            standby = if (
+                completeness == SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND
+            ) {
+                StandbyState.UNKNOWN
+            } else {
+                StandbyState.fromPersisted(stored.standbyName)
+            },
+            // Ignore a legacy battery-only timestamp until Standby v1 wrote snapshot data.
+            lastChecked = if (stored.hasCompleteSnapshotV1) stored.lastChecked else 0L,
+            completeness = completeness
+        )
+    }
 
     fun encode(snapshot: SnapshotState): StoredSnapshot = StoredSnapshot(
         batteryLevel = snapshot.batteryLevel?.takeIf { it in 0..100 },

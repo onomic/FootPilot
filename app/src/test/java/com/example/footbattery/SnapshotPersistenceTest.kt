@@ -5,6 +5,38 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SnapshotPersistenceTest {
+    @Test fun ambiguousAfterCommandStateSurvivesPersistenceReload() {
+        val ambiguous = SnapshotState(
+            batteryLevel = 70,
+            standby = StandbyState.UNKNOWN,
+            lastChecked = 100L,
+            completeness = SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND
+        )
+
+        val reloaded = SnapshotPersistence.decode(SnapshotPersistence.encode(ambiguous))
+
+        assertEquals(ambiguous, reloaded)
+    }
+
+    @Test fun ambiguousCompletenessNeverReloadsAStaleKnownStandby() {
+        val reloaded = SnapshotPersistence.decode(
+            StoredSnapshot(
+                batteryLevel = 70,
+                standbyName = StandbyState.OFF.name,
+                lastChecked = 100L,
+                hasCompleteSnapshotV1 = true,
+                completenessName =
+                    SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND.name
+            )
+        )
+
+        assertEquals(StandbyState.UNKNOWN, reloaded.standby)
+        assertEquals(
+            SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND,
+            reloaded.completeness
+        )
+    }
+
     @Test fun batteryPendingStateSurvivesPersistenceReload() {
         val pending = SnapshotState(
             batteryLevel = 70,

@@ -45,4 +45,45 @@ class SnapshotPresentationTest {
     @Test fun completeDisplayHasNoVerificationWarning() {
         assertNull(SnapshotPresentation.create(complete).verificationMessage)
     }
+
+    @Test fun ambiguousAfterCommandIsVisibleAndDisablesStandbyAction() {
+        val ambiguous = complete.copy(
+            standby = StandbyState.UNKNOWN,
+            completeness = SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND
+        )
+
+        val display = SnapshotPresentation.create(ambiguous)
+
+        assertEquals("Battery 85%", display.batteryLine)
+        assertEquals("Standby not confirmed", display.standbyLine)
+        assertEquals(
+            "State could not be verified after command",
+            display.verificationMessage
+        )
+        assertEquals("Last complete check: 10:20 PM", display.checkedLine("10:20 PM"))
+        assertNull(display.standbyAction)
+    }
+
+    @Test fun ambiguousAfterCommandUsesStrongerDisconnectWarning() {
+        val ambiguous = complete.copy(
+            standby = StandbyState.UNKNOWN,
+            completeness = SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND
+        )
+
+        assertEquals(
+            "Standby could not be confirmed and may remain on after disconnecting.",
+            disconnectStandbyWarning(ambiguous)
+        )
+    }
+
+    @Test fun initialUnknownDoesNotBecomeCommandAmbiguityOrWarnOnDisconnect() {
+        val initial = SnapshotState()
+        val display = SnapshotPresentation.create(initial)
+
+        assertEquals(SnapshotCompleteness.COMPLETE, initial.completeness)
+        assertEquals("Standby not checked", display.standbyLine)
+        assertEquals("State not checked yet", display.checkedLine(null))
+        assertNull(display.verificationMessage)
+        assertNull(disconnectStandbyWarning(initial))
+    }
 }
