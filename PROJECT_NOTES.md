@@ -1,5 +1,13 @@
 # Foot Battery — Project Notes & Handoff
 
+> **Standby v1 update:** The historical notes below describe the pre-standby implementation.
+> The current app now routes all live, manual, notification, and scheduled BLE work through
+> one process-wide coordinator and `FootGattSession`. A complete check queries confirmed
+> standby over Össur AA01 and then reads battery; both values and one timestamp are persisted
+> atomically. AA01 and AA02 notifications are initialized in callback order before use. The
+> only proprietary commands are the confirmed standby query/on/off packets. The dormant
+> `BatteryService` and battery-only `BleReader` paths were removed.
+
 **Purpose of this document:** complete context for the FootBattery Android app so work can
 continue in a fresh session without losing any decisions or state. Last updated at the point
 where the app is fully working except for one unavoidable Android UI behavior (notification
@@ -34,9 +42,9 @@ and has full authority over design decisions, including ones that touch the devi
   - Generic Attribute `0x1801`
   - Battery Service `0x180F` → Battery Level `0x2A19` (NOTIFY, READ) + CCCD `0x2902`
   - Device Information `0x180A`
-  - **Unknown / proprietary service** `1610aa00-0111-0899-2503-732…4219` — **DO NOT WRITE TO
-    THIS.** This is where settings that could affect the foot's behavior/gait likely live. The
-    app is strictly **read-only** by design.
+  - **Össur proprietary service** `1610aa00-0111-0899-2503-732…4219` — Standby v1 uses only the
+    confirmed AA01 query/on/off protocol and subscribes to AA01 plus AA02. No other proprietary
+    command is permitted.
 - **Pairing:** the foot uses a **6-digit numeric PIN** to bond. (Early on we mistakenly thought
   it was "Just Works"/no-PIN because it happened to already be bonded; it actually prompts for a
   PIN on a fresh bond.)
@@ -307,9 +315,9 @@ available in Android's notification framework.
 
 ## 12. Guardrails / philosophy to preserve
 
-- **Read-only, always.** The app only ever reads the standard Battery Level characteristic. It must
-  **never write to the proprietary "Unknown Service"** — that is where gait/behavior settings likely
-  live, and this is a medical device on the user's body.
+- **Constrained proprietary access.** The app may write only the confirmed AA01 standby query/on/off
+  packets documented by Standby v1. It must not send any other proprietary command and must never
+  write standby packets to AA02.
 - The **peep on disconnect** is the user's trusted signal that the link truly dropped; preserve it on the
   explicit Disconnect action.
 - The **in-app check is the gold standard** for speed/seamlessness; any background/notification path

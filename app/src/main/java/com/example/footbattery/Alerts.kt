@@ -1,21 +1,42 @@
 package com.example.footbattery
 
+import android.Manifest
+import android.annotation.SuppressLint
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import java.util.concurrent.atomic.AtomicInteger
 
-/** Centralized notifications so the live connection, the worker, and on-demand checks all match. */
+/** Centralized verified-snapshot notifications and low-battery alerts. */
 object Alerts {
     const val ONGOING_CH = "monitor"
     const val ALERT_CH = "alert"
     const val ONGOING_ID = 1
     const val ALERT_ID = 2
     const val POLL_STATUS_ID = 3
+
     const val ACTION_CHECK_NOW = "com.example.footbattery.CHECK_NOW"
+    const val ACTION_STANDBY_ON = "com.example.footbattery.STANDBY_ON"
+    const val ACTION_STANDBY_OFF = "com.example.footbattery.STANDBY_OFF"
+
+    private const val REQUEST_OPEN_APP = 10
+    private const val REQUEST_CHECK_NOW = 20
+    private const val REQUEST_STANDBY_ON = 21
+    private const val REQUEST_STANDBY_OFF = 22
+    private const val TRANSIENT_STATUS_MS = 8_000L
+
+    private val handler = Handler(Looper.getMainLooper())
+    private val transientGeneration = AtomicInteger(0)
 
     fun ensureChannels(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
@@ -27,124 +48,176 @@ object Alerts {
         nm.createNotificationChannel(alert)
     }
 
-    private fun openApp(ctx: Context): PendingIntent {
-        val i = Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
-            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
-        return PendingIntent.getActivity(ctx, 0, i, flags)
-    }
-
-    /** Persistent "now monitoring" notification, shown while a live connection is held. */
-    fun postOngoing(ctx: Context, pct: Int?, statusText: String) {
-        // Short, number-first title so the % is never the part truncated when collapsed.
-        val title = if (pct != null) "Battery $pct%" else "Battery —"
-        val n = NotificationCompat.Builder(ctx, ONGOING_CH)
-            .setSmallIcon(R.drawable.ic_battery)
-            .setContentTitle(title)
-            .setContentText(statusText)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(openApp(ctx))
-            .build()
-        ctx.getSystemService(NotificationManager::class.java).notify(ONGOING_ID, n)
+    /** Persistent notification for a live connection. */
+    fun postOngoing(ctx: Context, statusText: String? = null) {
+        BatteryRepo.ensureInitialized(ctx)
+        val notification = buildStateNotification(
+            ctx = ctx,
+            ongoing = true,
+            statusText = statusText,
+            includeActions = statusText == null && actionsAreSafe(ctx)
+        )
+        ctx.getSystemService(NotificationManager::class.java).notify(ONGOING_ID, notification)
     }
 
     fun cancelOngoing(ctx: Context) {
         ctx.getSystemService(NotificationManager::class.java).cancel(ONGOING_ID)
     }
 
-    /** Human-friendly relative time, e.g. "just now", "5 min ago", "2 hr ago". */
-    fun relativeTime(epochMillis: Long): String {
-        if (epochMillis <= 0L) return "never"
-        val secs = (System.currentTimeMillis() - epochMillis) / 1000
-        return when {
-            secs < 45 -> "just now"
-            secs < 90 -> "1 min ago"
-            secs < 3600 -> "${secs / 60} min ago"
-            secs < 5400 -> "1 hr ago"
-            secs < 86400 -> "${secs / 3600} hr ago"
-            secs < 172800 -> "1 day ago"
-            else -> "${secs / 86400} days ago"
-        }
-    }
-
-    /** Fixed clock time of a check, e.g. "10:08 PM" (or with date if not today). */
-    fun clockTime(ctx: Context, epochMillis: Long): String {
-        if (epochMillis <= 0L) return "never"
-        val now = java.util.Calendar.getInstance()
-        val then = java.util.Calendar.getInstance().apply { timeInMillis = epochMillis }
-        val sameDay = now.get(java.util.Calendar.YEAR) == then.get(java.util.Calendar.YEAR) &&
-            now.get(java.util.Calendar.DAY_OF_YEAR) == then.get(java.util.Calendar.DAY_OF_YEAR)
-        val timeFmt = android.text.format.DateFormat.getTimeFormat(ctx)
-        val time = timeFmt.format(java.util.Date(epochMillis))
-        return if (sameDay) time else {
-            val dateFmt = android.text.format.DateFormat.getDateFormat(ctx)
-            dateFmt.format(java.util.Date(epochMillis)) + " " + time
-        }
-    }
-
-    private fun checkNowAction(ctx: Context): NotificationCompat.Action {
-        // Start a brief foreground service (normal priority) so the check runs fast and
-        // reliably in the background, without opening the app.
-        val i = Intent(ctx, CheckNowService::class.java).setAction(ACTION_CHECK_NOW)
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
-            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
-        val pi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            PendingIntent.getForegroundService(ctx, 2, i, flags)
-        else
-            PendingIntent.getService(ctx, 2, i, flags)
-        return NotificationCompat.Action(0, "Check now", pi)
-    }
-
-    /**
-     * Persistent status notification shown while background polling is on (and live
-     * monitoring is off): battery level + "Last checked: <relative>", a Check now button,
-     * and tap-to-open. Call updatePollStatus() to refresh after a reading; call
-     * cancelPollStatus() when polling is turned off.
-     */
+    /** Persistent status notification while polling is enabled and live monitoring is off. */
     fun updatePollStatus(ctx: Context) {
-        val pct = BatteryRepo.level.value
-        // Short, number-first title so the % is never the part truncated when collapsed.
-        val title = if (pct != null) "Battery $pct%" else "Battery —"
-        val whenText = "Last checked: " + clockTime(ctx, Prefs.lastChecked(ctx))
-        val n = NotificationCompat.Builder(ctx, ONGOING_CH)
-            .setSmallIcon(R.drawable.ic_battery)
-            .setContentTitle(title)
-            .setContentText(whenText)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(openApp(ctx))
-            .addAction(checkNowAction(ctx))
-            .build()
-        ctx.getSystemService(NotificationManager::class.java).notify(POLL_STATUS_ID, n)
+        BatteryRepo.ensureInitialized(ctx)
+        val notification = buildStateNotification(
+            ctx = ctx,
+            ongoing = true,
+            statusText = null,
+            includeActions = actionsAreSafe(ctx)
+        )
+        ctx.getSystemService(NotificationManager::class.java).notify(POLL_STATUS_ID, notification)
     }
 
     fun cancelPollStatus(ctx: Context) {
         ctx.getSystemService(NotificationManager::class.java).cancel(POLL_STATUS_ID)
     }
 
-    /** Transient body swap while a notification-triggered check is running. */
-    fun setPollStatusChecking(ctx: Context) = postPollStatusBody(ctx, "Checking…")
-
-    /** Transient body swap when a notification-triggered check fails. */
-    fun setPollStatusFailed(ctx: Context) = postPollStatusBody(ctx, "Check failed — foot not in range")
-
-    private fun postPollStatusBody(ctx: Context, body: String) {
-        val pct = BatteryRepo.level.value
-        val title = if (pct != null) "Battery $pct%" else "Battery —"
-        val n = NotificationCompat.Builder(ctx, ONGOING_CH)
-            .setSmallIcon(R.drawable.ic_battery)
-            .setContentTitle(title)
-            .setContentText(body)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(openApp(ctx))
-            .addAction(checkNowAction(ctx))
-            .build()
-        ctx.getSystemService(NotificationManager::class.java).notify(POLL_STATUS_ID, n)
+    /** Immediately replaces any applicable persistent notification and suppresses actions. */
+    fun showOperation(ctx: Context, text: String) {
+        transientGeneration.incrementAndGet()
+        postApplicable(ctx, text, includeActions = false)
     }
 
-    /** Fire a low-battery alert if below threshold and armed; re-arm once recovered. */
+    /** Restore verified state/actions, optionally showing a temporary human-readable result. */
+    fun refreshApplicable(ctx: Context, transientStatus: String? = null) {
+        val generation = transientGeneration.incrementAndGet()
+        postApplicable(ctx, transientStatus, includeActions = actionsAreSafe(ctx))
+        if (transientStatus != null) {
+            handler.postDelayed({
+                if (transientGeneration.get() == generation && !BleOperationCoordinator.isBusy()) {
+                    postApplicable(ctx.applicationContext, null, includeActions = actionsAreSafe(ctx))
+                }
+            }, TRANSIENT_STATUS_MS)
+        }
+    }
+
+    /** Foreground-service notification shown immediately for a notification action. */
+    fun operationNotification(ctx: Context, text: String): Notification =
+        buildStateNotification(ctx, ongoing = true, statusText = text, includeActions = false)
+
+    private fun postApplicable(ctx: Context, statusText: String?, includeActions: Boolean) {
+        when {
+            LiveConnection.isMonitoringRequested() -> {
+                val notification = buildStateNotification(ctx, true, statusText, includeActions)
+                ctx.getSystemService(NotificationManager::class.java).notify(ONGOING_ID, notification)
+            }
+            Prefs.polling(ctx) -> {
+                val notification = buildStateNotification(ctx, true, statusText, includeActions)
+                ctx.getSystemService(NotificationManager::class.java).notify(POLL_STATUS_ID, notification)
+            }
+        }
+    }
+
+    private fun buildStateNotification(
+        ctx: Context,
+        ongoing: Boolean,
+        statusText: String?,
+        includeActions: Boolean
+    ): Notification {
+        val snapshot = BatteryRepo.snapshot.value
+        val batteryLine = snapshot.batteryLevel?.let { "Battery $it%" } ?: "Battery —"
+        val standbyLine = when (snapshot.standby) {
+            StandbyState.ON -> "Standby on"
+            StandbyState.OFF -> "Standby off"
+            StandbyState.UNKNOWN -> "Standby not checked"
+        }
+        val checkedLine = if (snapshot.lastChecked > 0L) {
+            "Last checked: ${clockTime(ctx, snapshot.lastChecked)}"
+        } else {
+            "State not checked yet"
+        }
+        val collapsed = statusText ?: "$standbyLine · $checkedLine"
+
+        val style = NotificationCompat.InboxStyle()
+            .addLine(batteryLine)
+            .addLine(standbyLine)
+            .addLine(checkedLine)
+        if (statusText != null) style.addLine(statusText)
+
+        val builder = NotificationCompat.Builder(ctx, ONGOING_CH)
+            .setSmallIcon(R.drawable.ic_battery)
+            .setContentTitle(batteryLine)
+            .setContentText(collapsed)
+            .setStyle(style)
+            .setOngoing(ongoing)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(openApp(ctx))
+
+        if (includeActions) {
+            builder.addAction(operationAction(ctx, ACTION_CHECK_NOW, "Check now", REQUEST_CHECK_NOW))
+            when (snapshot.standby) {
+                StandbyState.ON -> builder.addAction(
+                    operationAction(ctx, ACTION_STANDBY_OFF, "Turn standby off", REQUEST_STANDBY_OFF)
+                )
+                StandbyState.OFF -> builder.addAction(
+                    operationAction(ctx, ACTION_STANDBY_ON, "Turn standby on", REQUEST_STANDBY_ON)
+                )
+                StandbyState.UNKNOWN -> Unit
+            }
+        }
+        return builder.build()
+    }
+
+    private fun openApp(ctx: Context): PendingIntent {
+        val intent = Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        return PendingIntent.getActivity(ctx, REQUEST_OPEN_APP, intent, pendingIntentFlags())
+    }
+
+    private fun operationAction(
+        ctx: Context,
+        action: String,
+        label: String,
+        requestCode: Int
+    ): NotificationCompat.Action {
+        val intent = Intent(ctx, CheckNowService::class.java).setAction(action)
+        val pending = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            PendingIntent.getForegroundService(ctx, requestCode, intent, pendingIntentFlags())
+        } else {
+            PendingIntent.getService(ctx, requestCode, intent, pendingIntentFlags())
+        }
+        return NotificationCompat.Action(0, label, pending)
+    }
+
+    private fun pendingIntentFlags(): Int = PendingIntent.FLAG_UPDATE_CURRENT or
+        (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+
+    @SuppressLint("MissingPermission")
+    private fun actionsAreSafe(ctx: Context): Boolean {
+        val permissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT) ==
+            PackageManager.PERMISSION_GRANTED
+        val connectionSafe = LiveConnection.isReady() || LiveConnection.canUseTemporarySession()
+        val bluetoothEnabled = try {
+            permissionGranted &&
+                (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.isEnabled == true
+        } catch (_: Exception) {
+            false
+        }
+        return bluetoothEnabled && connectionSafe && !BleOperationCoordinator.isBusy()
+    }
+
+    /** Fixed clock time of a complete snapshot, with a date when it was not taken today. */
+    fun clockTime(ctx: Context, epochMillis: Long): String {
+        if (epochMillis <= 0L) return "never"
+        val now = java.util.Calendar.getInstance()
+        val then = java.util.Calendar.getInstance().apply { timeInMillis = epochMillis }
+        val sameDay = now.get(java.util.Calendar.YEAR) == then.get(java.util.Calendar.YEAR) &&
+            now.get(java.util.Calendar.DAY_OF_YEAR) == then.get(java.util.Calendar.DAY_OF_YEAR)
+        val time = android.text.format.DateFormat.getTimeFormat(ctx).format(java.util.Date(epochMillis))
+        return if (sameDay) time else {
+            android.text.format.DateFormat.getDateFormat(ctx).format(java.util.Date(epochMillis)) + " " + time
+        }
+    }
+
+    /** Live values can alert without mutating the persisted complete snapshot timestamp. */
     fun maybeAlert(ctx: Context, pct: Int) {
         val threshold = Prefs.threshold(ctx)
         if (pct < threshold && Prefs.armed(ctx)) {
@@ -155,21 +228,8 @@ object Alerts {
         }
     }
 
-    /**
-     * Single entry point for any fresh reading (live, background poll, or manual check):
-     * stamps the time, runs the low alert, and refreshes the poll-status notification
-     * when background polling is on.
-     */
-    fun recordReading(ctx: Context, pct: Int) {
-        Prefs.setLastChecked(ctx, System.currentTimeMillis())
-        maybeAlert(ctx, pct)
-        if (Prefs.polling(ctx) && !BatteryRepo.running.value) {
-            updatePollStatus(ctx)
-        }
-    }
-
     private fun showLow(ctx: Context, pct: Int) {
-        val n = NotificationCompat.Builder(ctx, ALERT_CH)
+        val notification = NotificationCompat.Builder(ctx, ALERT_CH)
             .setSmallIcon(R.drawable.ic_battery)
             .setContentTitle("Low battery: $pct%")
             .setContentText("Foot is low — time to charge.")
@@ -178,6 +238,6 @@ object Alerts {
             .setAutoCancel(true)
             .setContentIntent(openApp(ctx))
             .build()
-        ctx.getSystemService(NotificationManager::class.java).notify(ALERT_ID, n)
+        ctx.getSystemService(NotificationManager::class.java).notify(ALERT_ID, notification)
     }
 }

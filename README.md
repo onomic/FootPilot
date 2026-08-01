@@ -1,19 +1,17 @@
 # Foot Battery Monitor
 
-An Android app that connects to an Össur Proprio Foot over Bluetooth LE, shows its
-battery level, and **sends a notification when the battery drops below 25%**.
-The official Össur Logic app is iOS-only; this fills the Android gap. Works with any
-BLE device that exposes the standard Battery Service (0x180F).
+An Android app for one configured Össur Proprio Foot. It reads the standard BLE battery
+level, reports low battery, and can query and change the foot's confirmed standby state.
+Battery and standby checks are saved as one verified snapshot.
 
 ## How the alert works
 
-A foreground service holds the Bluetooth connection (even when the app is closed),
-subscribes to battery-level updates, and posts a high-priority notification the first
-time the level falls below the threshold. It re-arms once you charge back above it, so
-you get one alert per discharge, not a stream of them. There's also a quiet ongoing
-notification showing the current % with a Stop button.
+A live in-process connection subscribes to battery updates while the app is running.
+Optional WorkManager polling briefly connects, obtains battery plus confirmed standby,
+then disconnects and removes the bond. Low-battery alerts re-arm after charging above the
+configured threshold, so they fire once per discharge rather than repeatedly.
 
-To change the threshold, edit `LOW_BATTERY_THRESHOLD` in `BatteryService.kt`.
+The alert threshold, pairing PIN, polling interval, and polling toggle are available in Settings.
 
 ## Getting a runnable app
 
@@ -35,11 +33,11 @@ Pick whichever path fits what you have.
 
 ## Using it
 
-1. Close the **Össur Logic app on your iPhone** — the foot allows only one connection.
-2. Open the app, tap **Scan**, grant the Bluetooth + Notifications permissions, Scan again.
-3. Tap your foot (e.g. HF206250). This remembers it.
-4. Tap **Start monitoring**. The ongoing notification appears and tracks battery.
-   Closing the app is fine — the service keeps running.
+1. Close any other app connected to the foot — it allows only one connection.
+2. Open the app and grant Bluetooth + Notifications permissions.
+3. Save the pairing PIN in Settings if the foot requires one.
+4. Tap **Check now** for a complete battery/standby snapshot, or **Start** for live monitoring.
+5. Once standby has been checked, use the standby switch in the app or notification.
 
 ## Make background alerts reliable
 
@@ -47,13 +45,14 @@ Android (especially Samsung/Xiaomi/OnePlus) may kill background Bluetooth to sav
 which would stop the alerts. To prevent that:
 - Settings → Apps → Foot Battery → Battery → **Unrestricted** (or "Don't optimize").
 
-The app also tries to resume monitoring after a reboot, though some OS versions block
-that — if so, just open the app once.
+Scheduled polling is restored by WorkManager. Live monitoring ends with the app process.
 
 ## Safety
 
-Read-only by design. Don't write to the foot's proprietary "Unknown Service" — that's
-where settings affecting your gait live. This app only reads the standard battery value.
+The only proprietary writes are the three confirmed Össur AA01 standby packets: query,
+standby on, and standby off. They use write-with-response and require notification
+confirmation plus a final query. No commands are sent to AA02 or to any other proprietary
+characteristic.
 
 ## Version notes
 

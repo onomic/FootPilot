@@ -23,7 +23,7 @@ class PairingReceiver : BroadcastReceiver() {
                 @Suppress("DEPRECATION") intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
 
         // Only handle our foot.
-        if (device == null || device.address != BatteryService.TARGET_ADDRESS) return
+        if (device == null || device.address != FootConfig.TARGET_ADDRESS) return
 
         val code = Prefs.pairingCode(context)
         if (code.isEmpty()) return  // nothing saved -> let Android prompt normally

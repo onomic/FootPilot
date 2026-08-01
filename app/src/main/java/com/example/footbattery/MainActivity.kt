@@ -39,6 +39,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.IconButton
@@ -49,6 +50,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -71,9 +73,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 private val Bg = Color(0xFF0A0E0D)
 private val Panel = Color(0xFF121817)
@@ -104,7 +104,7 @@ private fun systemLinkLabel(ctx: Context): String {
         ) return ""
         val bm = ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val linked = bm.getConnectedDevices(BluetoothProfile.GATT)
-            .any { it.address == BatteryService.TARGET_ADDRESS }
+            .any { it.address == FootConfig.TARGET_ADDRESS }
         val n = BleRegistry.count()
         (if (linked) "System: foot CONNECTED" else "System: foot not connected") + "  ·  app clients: $n"
     } catch (e: Exception) { "" }
@@ -117,10 +117,12 @@ class MainActivity : ComponentActivity() {
     private var intervalMin by mutableStateOf(60)
     private var pairingCode by mutableStateOf("")
     private var showSettings by mutableStateOf(false)
+    private var showDisconnectWarning by mutableStateOf(false)
+    private var permissionsGranted by mutableStateOf(false)
 
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { /* user grants; they tap again */ }
+    ) { permissionsGranted = canUseBluetooth() }
 
     private var pendingCheck = false
 
@@ -130,6 +132,13 @@ class MainActivity : ComponentActivity() {
         polling = Prefs.polling(this)
         intervalMin = Prefs.intervalMin(this)
         pairingCode = Prefs.pairingCode(this)
+        BatteryRepo.ensureInitialized(this)
+        permissionsGranted = canUseBluetooth()
+        Alerts.ensureChannels(this)
+        if (!LiveConnection.isMonitoringRequested()) {
+            Alerts.cancelOngoing(this)
+            if (polling) Alerts.updatePollStatus(this) else Alerts.cancelPollStatus(this)
+        }
 
         handleIntent(intent)
 
@@ -138,6 +147,36 @@ class MainActivity : ComponentActivity() {
                 val level by BatteryRepo.level.collectAsState()
                 val status by BatteryRepo.status.collectAsState()
                 val running by BatteryRepo.running.collectAsState()
+                val snapshot by BatteryRepo.snapshot.collectAsState()
+                val standbyStatus by BatteryRepo.standbyStatus.collectAsState()
+                val connectionState by BatteryRepo.connectionState.collectAsState()
+                val coordination by BleOperationCoordinator.state.collectAsState()
+
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        permissionsGranted = canUseBluetooth()
+                        delay(1_000L)
+                    }
+                }
+
+                if (showDisconnectWarning) {
+                    AlertDialog(
+                        onDismissRequest = { showDisconnectWarning = false },
+                        title = { Text("Disconnect monitoring?") },
+                        text = { Text("Standby will remain on after disconnecting.") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                showDisconnectWarning = false
+                                LiveConnection.stop()
+                            }) { Text("Disconnect") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showDisconnectWarning = false }) {
+                                Text("Cancel")
+                            }
+                        }
+                    )
+                }
 
                 if (showSettings) {
                     SettingsScreen(
@@ -154,10 +193,16 @@ class MainActivity : ComponentActivity() {
                 } else {
                     MainScreen(
                         level = level, status = status, running = running,
+                        connectionState = connectionState,
+                        snapshot = snapshot,
+                        standbyStatus = standbyStatus,
+                        operation = coordination.visibleOperation,
+                        permissionsGranted = permissionsGranted,
                         threshold = threshold,
                         onStart = ::startMonitoring,
-                        onStop = ::stopMonitoring,
+                        onStop = ::requestStopMonitoring,
                         onCheck = ::checkNow,
+                        onStandby = ::changeStandby,
                         onSettings = { showSettings = true }
                     )
                 }
@@ -215,6 +260,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        permissionsGranted = canUseBluetooth()
         if (pendingCheck) {
             pendingCheck = false
             checkNow()
@@ -235,41 +281,39 @@ class MainActivity : ComponentActivity() {
         ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
     }
 
+    private fun canUseBluetooth(): Boolean = try {
+        hasAll() &&
+            (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.isEnabled == true
+    } catch (_: Exception) {
+        false
+    }
+
     // ---- Actions ----
     private fun startMonitoring() {
         if (!hasAll()) { permLauncher.launch(neededPerms()); return }
+        if (BleOperationCoordinator.isBusy()) return
         LiveConnection.start(this)
     }
 
-    private fun stopMonitoring() {
-        LiveConnection.stop()
+    private fun requestStopMonitoring() {
+        if (BleOperationCoordinator.isBusy()) return
+        if (BatteryRepo.snapshot.value.standby == StandbyState.ON) {
+            showDisconnectWarning = true
+        } else {
+            LiveConnection.stop()
+        }
     }
 
     private fun checkNow() {
         if (!hasAll()) { permLauncher.launch(neededPerms()); return }
-        // If a live connection is up, just re-read on it.
-        if (LiveConnection.isConnected()) {
-            BatteryRepo.status.value = "Checking…"
-            LiveConnection.refresh()
-            return
-        }
-        // Ignore taps while a check is already running.
-        if (BleReader.isBusy()) {
-            BatteryRepo.status.value = "Checking…"
-            return
-        }
-        BatteryRepo.status.value = "Checking…"
-        lifecycleScope.launch {
-            Alerts.ensureChannels(this@MainActivity)
-            val pct = BleReader.readOnce(applicationContext)
-            if (pct != null) {
-                BatteryRepo.level.value = pct
-                BatteryRepo.status.value = "Checked"
-                Alerts.recordReading(applicationContext, pct)
-            } else {
-                BatteryRepo.status.value = "Check failed — is the foot in range?"
-            }
-        }
+        Alerts.ensureChannels(this)
+        FootOperations.launchManualCheck(applicationContext)
+    }
+
+    private fun changeStandby(requested: StandbyState) {
+        if (!hasAll()) { permLauncher.launch(neededPerms()); return }
+        Alerts.ensureChannels(this)
+        FootOperations.launchStandbyChange(applicationContext, requested)
     }
 }
 
@@ -277,10 +321,25 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun MainScreen(
-    level: Int?, status: String, running: Boolean, threshold: Int,
-    onStart: () -> Unit, onStop: () -> Unit, onCheck: () -> Unit, onSettings: () -> Unit
+    level: Int?,
+    status: String,
+    running: Boolean,
+    connectionState: LiveConnectionState,
+    snapshot: SnapshotState,
+    standbyStatus: String,
+    operation: BleOperationKind?,
+    permissionsGranted: Boolean,
+    threshold: Int,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onCheck: () -> Unit,
+    onStandby: (StandbyState) -> Unit,
+    onSettings: () -> Unit
 ) {
     val accent = colorForLevel(level)
+    val ready = connectionState == LiveConnectionState.READY
+    val busy = operation != null
+    val canUseConnection = !running || ready
     Box(Modifier.fillMaxSize().background(Bg).padding(horizontal = 24.dp, vertical = 28.dp)) {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
 
@@ -292,7 +351,7 @@ private fun MainScreen(
                     }
                     Text("BLE · 0x180F", color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                 }
-                StatusPill(running && level != null)
+                StatusPill(ready)
                 Spacer(Modifier.width(4.dp))
                 IconButton(onClick = onSettings) { Text("\u2699", color = Muted, fontSize = 22.sp) }
             }
@@ -301,23 +360,38 @@ private fun MainScreen(
             BatteryGauge(level, accent)
             Spacer(Modifier.height(24.dp))
 
-            Text(BatteryService.TARGET_NAME, color = Ink, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
+            Text(FootConfig.TARGET_NAME, color = Ink, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
             Spacer(Modifier.height(4.dp))
             Text("Alerts below $threshold%", color = Muted, fontSize = 12.sp)
+
+            Spacer(Modifier.height(18.dp))
+            StandbyCard(
+                snapshot = snapshot,
+                status = standbyStatus,
+                operation = operation,
+                enabled = permissionsGranted && !busy && canUseConnection &&
+                    snapshot.standby != StandbyState.UNKNOWN,
+                onChange = onStandby
+            )
 
             Spacer(Modifier.weight(1f))
 
             OutlinedButton(
-                onClick = onCheck, modifier = Modifier.fillMaxWidth(),
+                onClick = onCheck,
+                enabled = permissionsGranted && !busy && canUseConnection,
+                modifier = Modifier.fillMaxWidth(),
                 border = BorderStroke(1.dp, accent),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = accent)
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = accent,
+                    disabledContentColor = Muted
+                )
             ) { Text("Check now", fontWeight = FontWeight.Bold) }
 
             Spacer(Modifier.height(12.dp))
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(
-                    onClick = onStart, enabled = !running, modifier = Modifier.weight(1f),
+                    onClick = onStart, enabled = !running && !busy, modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Accent, contentColor = Color(0xFF03140E),
                         disabledContainerColor = Panel, disabledContentColor = Muted
@@ -325,7 +399,7 @@ private fun MainScreen(
                 ) { Text(if (running) "Monitoring" else "Start", fontWeight = FontWeight.Bold) }
 
                 OutlinedButton(
-                    onClick = onStop, enabled = running, modifier = Modifier.weight(1f),
+                    onClick = onStop, enabled = running && !busy, modifier = Modifier.weight(1f),
                     border = BorderStroke(1.dp, Line),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink, disabledContentColor = Muted)
                 ) { Text("Disconnect", fontWeight = FontWeight.Bold) }
@@ -333,6 +407,85 @@ private fun MainScreen(
 
             Spacer(Modifier.height(10.dp))
             Text(status, color = Muted, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+        }
+    }
+}
+
+@Composable
+private fun StandbyCard(
+    snapshot: SnapshotState,
+    status: String,
+    operation: BleOperationKind?,
+    enabled: Boolean,
+    onChange: (StandbyState) -> Unit
+) {
+    val isOn = snapshot.standby == StandbyState.ON
+    val stateText = when (snapshot.standby) {
+        StandbyState.ON -> "On"
+        StandbyState.OFF -> "Off"
+        StandbyState.UNKNOWN -> "Not checked"
+    }
+    val checkedText = if (snapshot.lastChecked > 0L) {
+        "Last checked: ${Alerts.clockTime(LocalContext.current, snapshot.lastChecked)}"
+    } else {
+        "State not checked yet"
+    }
+    val operationText = when (operation) {
+        BleOperationKind.MANUAL_CHECK,
+        BleOperationKind.NOTIFICATION_CHECK,
+        BleOperationKind.SCHEDULED_CHECK,
+        BleOperationKind.LIVE_CONNECT,
+        BleOperationKind.LIVE_REFRESH -> "Checking standby..."
+        BleOperationKind.STANDBY_ON -> "Turning standby on..."
+        BleOperationKind.STANDBY_OFF -> "Turning standby off..."
+        else -> null
+    }
+    val detail = operationText ?: status.takeIf { it.isNotBlank() }
+    val borderColor = if (isOn) Warn else Line
+
+    Box(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Panel)
+            .border(1.dp, borderColor, RoundedCornerShape(14.dp)).padding(16.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "STANDBY",
+                    color = if (isOn) Warn else Muted,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    stateText,
+                    color = if (isOn) Warn else Ink,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(checkedText, color = Muted, fontSize = 12.sp)
+                if (detail != null) {
+                    Spacer(Modifier.height(5.dp))
+                    Text(detail, color = if (isOn) Warn else Muted, fontSize = 11.sp)
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(
+                checked = isOn,
+                enabled = enabled,
+                onCheckedChange = { checked ->
+                    onChange(if (checked) StandbyState.ON else StandbyState.OFF)
+                },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color(0xFF2A1900),
+                    checkedTrackColor = Warn,
+                    uncheckedThumbColor = Muted,
+                    uncheckedTrackColor = Panel,
+                    uncheckedBorderColor = Line,
+                    disabledCheckedTrackColor = Warn.copy(alpha = 0.45f),
+                    disabledUncheckedTrackColor = Panel
+                )
+            )
         }
     }
 }

@@ -20,7 +20,7 @@ object BondHelper {
         try {
             val adapter = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
                 ?: return
-            val device: BluetoothDevice = adapter.getRemoteDevice(BatteryService.TARGET_ADDRESS)
+            val device: BluetoothDevice = adapter.getRemoteDevice(FootConfig.TARGET_ADDRESS)
             val m = device.javaClass.getMethod("removeBond")
             m.invoke(device)
         } catch (_: Exception) {
