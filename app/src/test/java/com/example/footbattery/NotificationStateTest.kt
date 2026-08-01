@@ -34,6 +34,62 @@ class NotificationStateTest {
         assertEquals("Foot remained standby off", refreshed.statusText)
     }
 
+    @Test fun expandedContentUsesBatteryAsTitleWithoutRepeatingItInDetails() {
+        val onSnapshot = snapshot.copy(batteryLevel = 85, standby = StandbyState.ON)
+
+        val content = StateNotificationContentPresentation.create(
+            display = SnapshotPresentation.create(onSnapshot),
+            formattedTime = "2:34 a.m.",
+            statusText = null
+        )
+
+        assertEquals("Battery 85%", content.title)
+        assertEquals(
+            listOf("Standby on", "Last checked: 2:34 a.m."),
+            content.expandedLines
+        )
+        assertFalse(content.expandedLines.contains("Battery 85%"))
+    }
+
+    @Test fun expandedContentShowsVerificationWarningOnce() {
+        val pending = snapshot.copy(
+            batteryLevel = 85,
+            standby = StandbyState.ON,
+            completeness = SnapshotCompleteness.STANDBY_CONFIRMED_BATTERY_PENDING
+        )
+        val warning = "Battery not verified after standby change"
+
+        val content = StateNotificationContentPresentation.create(
+            display = SnapshotPresentation.create(pending),
+            formattedTime = "2:34 a.m.",
+            statusText = "  $warning  "
+        )
+
+        assertEquals(
+            listOf("Standby on", "Last complete check: 2:34 a.m.", warning),
+            content.expandedLines
+        )
+        assertEquals(1, content.expandedLines.count { it == warning })
+    }
+
+    @Test fun expandedContentShowsTransientStatusOnceAfterSnapshotDetails() {
+        val transient = "Standby on confirmed"
+
+        val content = StateNotificationContentPresentation.create(
+            display = SnapshotPresentation.create(
+                snapshot.copy(batteryLevel = 85, standby = StandbyState.ON)
+            ),
+            formattedTime = "2:34 a.m.",
+            statusText = transient
+        )
+
+        assertEquals(
+            listOf("Standby on", "Last checked: 2:34 a.m.", transient),
+            content.expandedLines
+        )
+        assertEquals(1, content.expandedLines.count { it == transient })
+    }
+
     @Test fun transientDisappearsAfterExpiration() {
         val store = TransientStatusStore(durationMs = 8_000L)
         val token = store.replace("Bluetooth transaction timed out", nowMs = 1_000L)

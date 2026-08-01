@@ -58,6 +58,12 @@ data class StateNotificationModel(
     val includeActions: Boolean
 )
 
+data class StateNotificationContent(
+    val title: String,
+    val collapsedText: String,
+    val expandedLines: List<String>
+)
+
 /** Pure precedence and battery presentation for both live and polling notification renders. */
 object NotificationStatePresentation {
     fun create(
@@ -71,6 +77,38 @@ object NotificationStatePresentation {
         statusText = activeOperationText ?: transientText,
         includeActions = activeOperationText == null && actionsSafe
     )
+}
+
+/** Pure notification copy and expanded-line structure, independent of Android UI classes. */
+object StateNotificationContentPresentation {
+    fun create(
+        display: SnapshotDisplayState,
+        formattedTime: String?,
+        statusText: String?
+    ): StateNotificationContent {
+        val checkedLine = display.checkedLine(formattedTime)
+        val resolvedStatus = statusText?.trim()?.takeIf { it.isNotEmpty() }
+        val expandedLines = buildList {
+            add(display.standbyLine)
+            add(checkedLine)
+            display.verificationMessage?.let { addDistinct(it) }
+            resolvedStatus?.let { addDistinct(it) }
+        }
+        val collapsedText = resolvedStatus ?: display.verificationMessage?.let {
+            "${display.standbyLine} · $it"
+        } ?: "${display.standbyLine} · $checkedLine"
+
+        return StateNotificationContent(
+            title = display.batteryLine,
+            collapsedText = collapsedText,
+            expandedLines = expandedLines
+        )
+    }
+
+    private fun MutableList<String>.addDistinct(text: String) {
+        val resolved = text.trim()
+        if (resolved.isNotEmpty() && none { it.trim() == resolved }) add(resolved)
+    }
 }
 
 enum class StateNotificationAction {

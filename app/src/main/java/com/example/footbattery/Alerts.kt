@@ -194,26 +194,20 @@ object Alerts {
     ): Notification {
         val snapshot = BatteryRepo.snapshot.value
         val display = SnapshotPresentation.create(snapshot, liveBatteryLevel)
-        val batteryLine = display.batteryLine
-        val standbyLine = display.standbyLine
-        val checkedLine = display.checkedLine(
-            snapshot.lastChecked.takeIf { it > 0L }?.let { clockTime(ctx, it) }
+        val content = StateNotificationContentPresentation.create(
+            display = display,
+            formattedTime = snapshot.lastChecked.takeIf { it > 0L }?.let {
+                clockTime(ctx, it)
+            },
+            statusText = statusText
         )
-        val collapsed = statusText ?: display.verificationMessage?.let {
-            "$standbyLine · $it"
-        } ?: "$standbyLine · $checkedLine"
-
         val style = NotificationCompat.InboxStyle()
-            .addLine(batteryLine)
-            .addLine(standbyLine)
-            .addLine(checkedLine)
-        display.verificationMessage?.let { style.addLine(it) }
-        if (statusText != null) style.addLine(statusText)
+        content.expandedLines.forEach { style.addLine(it) }
 
         val builder = NotificationCompat.Builder(ctx, ONGOING_CH)
             .setSmallIcon(R.drawable.ic_battery)
-            .setContentTitle(batteryLine)
-            .setContentText(collapsed)
+            .setContentTitle(content.title)
+            .setContentText(content.collapsedText)
             .setStyle(style)
             .setOngoing(ongoing)
             .setOnlyAlertOnce(true)

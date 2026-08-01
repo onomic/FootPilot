@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -71,6 +72,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -377,88 +380,132 @@ private fun MainScreen(
     val ready = connectionState == LiveConnectionState.READY
     val busy = operation != null
     val canUseConnection = !running || ready
+    val display = SnapshotPresentation.create(snapshot)
+    val messages = MainScreenMessagePresentation.create(
+        activeOperationText = standbyCardOperationText(operation),
+        verificationMessage = display.verificationMessage,
+        standbyStatus = standbyStatus,
+        generalStatus = status
+    )
     Box(Modifier.fillMaxSize().background(Bg).padding(horizontal = 24.dp, vertical = 28.dp)) {
-        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Row {
-                        Text("Foot ", color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Black)
-                        Text("Battery", color = Accent, fontSize = 20.sp, fontWeight = FontWeight.Black)
+        Column(Modifier.fillMaxSize()) {
+            Column(
+                Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Row {
+                            Text("Foot ", color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                            Text("Battery", color = Accent, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                        }
+                        Text("BLE · 0x180F", color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                     }
-                    Text("BLE · 0x180F", color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                    StatusPill(ready)
+                    Spacer(Modifier.width(4.dp))
+                    IconButton(onClick = onSettings) { Text("\u2699", color = Muted, fontSize = 22.sp) }
                 }
-                StatusPill(ready)
-                Spacer(Modifier.width(4.dp))
-                IconButton(onClick = onSettings) { Text("\u2699", color = Muted, fontSize = 22.sp) }
-            }
 
-            Spacer(Modifier.height(32.dp))
-            BatteryGauge(level, accent)
-            Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(32.dp))
+                BatteryGauge(level, accent)
+                Spacer(Modifier.height(24.dp))
 
-            Text(FootConfig.TARGET_NAME, color = Ink, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
-            Spacer(Modifier.height(4.dp))
-            Text("Alerts below $threshold%", color = Muted, fontSize = 12.sp)
+                Text(FootConfig.TARGET_NAME, color = Ink, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
+                Spacer(Modifier.height(4.dp))
+                Text("Alerts below $threshold%", color = Muted, fontSize = 12.sp)
 
-            Spacer(Modifier.height(18.dp))
-            StandbyCard(
-                snapshot = snapshot,
-                status = standbyStatus,
-                operation = operation,
-                enabled = bluetoothAvailable && !busy && canUseConnection &&
-                    snapshot.standby != StandbyState.UNKNOWN,
-                onChange = onStandby
-            )
-
-            Spacer(Modifier.weight(1f))
-
-            OutlinedButton(
-                onClick = onCheck,
-                enabled = bluetoothAvailable && !busy && canUseConnection,
-                modifier = Modifier.fillMaxWidth(),
-                border = BorderStroke(1.dp, accent),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = accent,
-                    disabledContentColor = Muted
+                Spacer(Modifier.height(18.dp))
+                StandbyCard(
+                    display = display,
+                    message = messages.standbyCardMessage,
+                    enabled = bluetoothAvailable && !busy && canUseConnection &&
+                        snapshot.standby != StandbyState.UNKNOWN,
+                    onChange = onStandby
                 )
-            ) { Text("Check now", fontWeight = FontWeight.Bold) }
 
-            Spacer(Modifier.height(12.dp))
-
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(
-                    onClick = onStart,
-                    enabled = canStartMonitoring(running, busy, bluetoothAvailable),
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Accent, contentColor = Color(0xFF03140E),
-                        disabledContainerColor = Panel, disabledContentColor = Muted
-                    )
-                ) { Text(if (running) "Monitoring" else "Start", fontWeight = FontWeight.Bold) }
-
-                OutlinedButton(
-                    onClick = onStop, enabled = running && !busy, modifier = Modifier.weight(1f),
-                    border = BorderStroke(1.dp, Line),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink, disabledContentColor = Muted)
-                ) { Text("Disconnect", fontWeight = FontWeight.Bold) }
+                Spacer(Modifier.height(24.dp))
             }
 
-            Spacer(Modifier.height(10.dp))
-            Text(status, color = Muted, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+            BottomActionArea(
+                accent = accent,
+                running = running,
+                busy = busy,
+                bluetoothAvailable = bluetoothAvailable,
+                canUseConnection = canUseConnection,
+                footerStatus = messages.footerStatus,
+                onStart = onStart,
+                onStop = onStop,
+                onCheck = onCheck
+            )
         }
     }
 }
 
 @Composable
+private fun BottomActionArea(
+    accent: Color,
+    running: Boolean,
+    busy: Boolean,
+    bluetoothAvailable: Boolean,
+    canUseConnection: Boolean,
+    footerStatus: String,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onCheck: () -> Unit
+) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        OutlinedButton(
+            onClick = onCheck,
+            enabled = bluetoothAvailable && !busy && canUseConnection,
+            modifier = Modifier.fillMaxWidth(),
+            border = BorderStroke(1.dp, accent),
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = accent,
+                disabledContentColor = Muted
+            )
+        ) { Text("Check now", fontWeight = FontWeight.Bold) }
+
+        Spacer(Modifier.height(12.dp))
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(
+                onClick = onStart,
+                enabled = canStartMonitoring(running, busy, bluetoothAvailable),
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Accent, contentColor = Color(0xFF03140E),
+                    disabledContainerColor = Panel, disabledContentColor = Muted
+                )
+            ) { Text(if (running) "Monitoring" else "Start", fontWeight = FontWeight.Bold) }
+
+            OutlinedButton(
+                onClick = onStop, enabled = running && !busy, modifier = Modifier.weight(1f),
+                border = BorderStroke(1.dp, Line),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink, disabledContentColor = Muted)
+            ) { Text("Disconnect", fontWeight = FontWeight.Bold) }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = footerStatus,
+            color = Muted,
+            fontSize = 12.sp,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 18.dp)
+        )
+    }
+}
+
+@Composable
 private fun StandbyCard(
-    snapshot: SnapshotState,
-    status: String,
-    operation: BleOperationKind?,
+    display: SnapshotDisplayState,
+    message: String,
     enabled: Boolean,
     onChange: (StandbyState) -> Unit
 ) {
-    val display = SnapshotPresentation.create(snapshot)
     val isOn = display.standby == StandbyState.ON
     val stateText = when {
         display.standbyAmbiguousAfterCommand -> "Not confirmed"
@@ -467,53 +514,30 @@ private fun StandbyCard(
         else -> "Not checked"
     }
     val checkedText = display.checkedLine(
-        snapshot.lastChecked.takeIf { it > 0L }?.let {
+        display.lastChecked.takeIf { it > 0L }?.let {
             Alerts.clockTime(LocalContext.current, it)
         }
     )
-    val operationText = when (operation) {
-        BleOperationKind.MANUAL_CHECK,
-        BleOperationKind.NOTIFICATION_CHECK,
-        BleOperationKind.SCHEDULED_CHECK,
-        BleOperationKind.LIVE_CONNECT,
-        BleOperationKind.LIVE_REFRESH -> "Checking standby..."
-        BleOperationKind.STANDBY_ON -> "Turning standby on..."
-        BleOperationKind.STANDBY_OFF -> "Turning standby off..."
-        else -> null
-    }
-    val detail = operationText ?: status.takeIf { it.isNotBlank() }
     val borderColor = if (isOn) Warn else Line
+    val verificationMessage = display.verificationMessage?.trim()
+    val messageColor = if (
+        message.isNotBlank() && message.trim() == verificationMessage
+    ) Warn else if (isOn) Warn else Muted
 
-    Box(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Panel)
-            .border(1.dp, borderColor, RoundedCornerShape(14.dp)).padding(16.dp)
+    Column(
+        Modifier.fillMaxWidth().heightIn(min = 154.dp)
+            .clip(RoundedCornerShape(14.dp)).background(Panel)
+            .border(1.dp, borderColor, RoundedCornerShape(14.dp))
+            .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "STANDBY",
-                    color = if (isOn) Warn else Muted,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-                Spacer(Modifier.height(5.dp))
-                Text(
-                    stateText,
-                    color = if (isOn) Warn else Ink,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(Modifier.height(3.dp))
-                Text(checkedText, color = Muted, fontSize = 12.sp)
-                if (display.verificationMessage != null) {
-                    Spacer(Modifier.height(5.dp))
-                    Text(display.verificationMessage, color = Warn, fontSize = 11.sp)
-                }
-                if (detail != null) {
-                    Spacer(Modifier.height(5.dp))
-                    Text(detail, color = if (isOn) Warn else Muted, fontSize = 11.sp)
-                }
-            }
+            Text(
+                "STANDBY",
+                color = if (isOn) Warn else Muted,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.weight(1f)
+            )
             Spacer(Modifier.width(12.dp))
             Switch(
                 checked = isOn,
@@ -530,6 +554,27 @@ private fun StandbyCard(
                     disabledCheckedTrackColor = Warn.copy(alpha = 0.45f),
                     disabledUncheckedTrackColor = Panel
                 )
+            )
+        }
+
+        Spacer(Modifier.height(2.dp))
+        Text(
+            stateText,
+            color = if (isOn) Warn else Ink,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(checkedText, color = Muted, fontSize = 12.sp)
+        Spacer(Modifier.height(6.dp))
+        Box(Modifier.fillMaxWidth().heightIn(min = 38.dp)) {
+            Text(
+                text = message,
+                color = messageColor,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
