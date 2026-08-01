@@ -160,9 +160,14 @@ object LiveConnection {
 
     private fun handleLiveBattery(owner: FootGattSession, level: Int) {
         if (session !== owner || !wantConnected) return
-        BatteryRepo.level.value = level
-        appContext?.let { Alerts.maybeAlert(it, level) }
-        // A live notification updates the in-memory gauge only; it never advances Last checked.
+        val app = appContext
+        FreshBatteryResultHandler.handle(
+            batteryLevel = level,
+            updateLiveLevel = { BatteryRepo.level.value = it },
+            evaluateLowBattery = { value -> app?.let { Alerts.maybeAlert(it, value) } }
+        )
+        app?.let { Alerts.refreshLiveBattery(it) }
+        // Live battery changes neither the persisted snapshot nor its Last checked time.
     }
 
     private fun handleUnexpectedDisconnect(

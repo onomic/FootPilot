@@ -211,7 +211,7 @@ class FootGattSession(
                 return@withLock StandbyTransactionRead(
                     requested,
                     verified = false,
-                    finalState = if (setAttempted) null else initial,
+                    finalState = null,
                     batteryLevel = null,
                     ambiguous = setAttempted,
                     error = e.userMessage("Final standby verification failed"),

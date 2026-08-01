@@ -118,11 +118,11 @@ class MainActivity : ComponentActivity() {
     private var pairingCode by mutableStateOf("")
     private var showSettings by mutableStateOf(false)
     private var showDisconnectWarning by mutableStateOf(false)
-    private var permissionsGranted by mutableStateOf(false)
+    private var bluetoothAvailable by mutableStateOf(false)
 
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissionsGranted = canUseBluetooth() }
+    ) { bluetoothAvailable = canUseBluetooth() }
 
     private var pendingCheck = false
 
@@ -133,7 +133,8 @@ class MainActivity : ComponentActivity() {
         intervalMin = Prefs.intervalMin(this)
         pairingCode = Prefs.pairingCode(this)
         BatteryRepo.ensureInitialized(this)
-        permissionsGranted = canUseBluetooth()
+        bluetoothAvailable = canUseBluetooth()
+        if (!bluetoothAvailable) BatteryRepo.status.value = bluetoothUnavailableStatus()
         Alerts.ensureChannels(this)
         if (!LiveConnection.isMonitoringRequested()) {
             Alerts.cancelOngoing(this)
@@ -153,8 +154,14 @@ class MainActivity : ComponentActivity() {
                 val coordination by BleOperationCoordinator.state.collectAsState()
 
                 LaunchedEffect(Unit) {
+                    var wasAvailable = bluetoothAvailable
                     while (true) {
-                        permissionsGranted = canUseBluetooth()
+                        val available = canUseBluetooth()
+                        bluetoothAvailable = available
+                        if (wasAvailable && !available && !running) {
+                            BatteryRepo.status.value = bluetoothUnavailableStatus()
+                        }
+                        wasAvailable = available
                         delay(1_000L)
                     }
                 }
@@ -197,7 +204,7 @@ class MainActivity : ComponentActivity() {
                         snapshot = snapshot,
                         standbyStatus = standbyStatus,
                         operation = coordination.visibleOperation,
-                        permissionsGranted = permissionsGranted,
+                        bluetoothAvailable = bluetoothAvailable,
                         threshold = threshold,
                         onStart = ::startMonitoring,
                         onStop = ::requestStopMonitoring,
@@ -260,7 +267,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        permissionsGranted = canUseBluetooth()
+        bluetoothAvailable = canUseBluetooth()
+        if (!bluetoothAvailable) BatteryRepo.status.value = bluetoothUnavailableStatus()
         if (pendingCheck) {
             pendingCheck = false
             checkNow()
@@ -281,16 +289,38 @@ class MainActivity : ComponentActivity() {
         ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
     }
 
+    private fun hasBluetoothPermission(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) ==
+            PackageManager.PERMISSION_GRANTED
+
     private fun canUseBluetooth(): Boolean = try {
-        hasAll() &&
+        hasBluetoothPermission() &&
             (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.isEnabled == true
     } catch (_: Exception) {
         false
     }
 
+    private fun bluetoothUnavailableStatus(): String =
+        if (hasBluetoothPermission()) "Turn on Bluetooth" else "Bluetooth permission is required"
+
     // ---- Actions ----
     private fun startMonitoring() {
-        if (!hasAll()) { permLauncher.launch(neededPerms()); return }
+        if (!hasBluetoothPermission()) {
+            BatteryRepo.status.value = "Bluetooth permission is required"
+            permLauncher.launch(neededPerms())
+            return
+        }
+        if (!canUseBluetooth()) {
+            bluetoothAvailable = false
+            BatteryRepo.status.value = "Turn on Bluetooth"
+            return
+        }
+        if (!hasAll()) {
+            BatteryRepo.status.value = "Notification permission is required"
+            permLauncher.launch(neededPerms())
+            return
+        }
         if (BleOperationCoordinator.isBusy()) return
         LiveConnection.start(this)
     }
@@ -328,7 +358,7 @@ private fun MainScreen(
     snapshot: SnapshotState,
     standbyStatus: String,
     operation: BleOperationKind?,
-    permissionsGranted: Boolean,
+    bluetoothAvailable: Boolean,
     threshold: Int,
     onStart: () -> Unit,
     onStop: () -> Unit,
@@ -369,7 +399,7 @@ private fun MainScreen(
                 snapshot = snapshot,
                 status = standbyStatus,
                 operation = operation,
-                enabled = permissionsGranted && !busy && canUseConnection &&
+                enabled = bluetoothAvailable && !busy && canUseConnection &&
                     snapshot.standby != StandbyState.UNKNOWN,
                 onChange = onStandby
             )
@@ -378,7 +408,7 @@ private fun MainScreen(
 
             OutlinedButton(
                 onClick = onCheck,
-                enabled = permissionsGranted && !busy && canUseConnection,
+                enabled = bluetoothAvailable && !busy && canUseConnection,
                 modifier = Modifier.fillMaxWidth(),
                 border = BorderStroke(1.dp, accent),
                 colors = ButtonDefaults.outlinedButtonColors(
@@ -391,7 +421,9 @@ private fun MainScreen(
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(
-                    onClick = onStart, enabled = !running && !busy, modifier = Modifier.weight(1f),
+                    onClick = onStart,
+                    enabled = canStartMonitoring(running, busy, bluetoothAvailable),
+                    modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Accent, contentColor = Color(0xFF03140E),
                         disabledContainerColor = Panel, disabledContentColor = Muted
@@ -420,16 +452,17 @@ private fun StandbyCard(
     onChange: (StandbyState) -> Unit
 ) {
     val isOn = snapshot.standby == StandbyState.ON
+    val display = SnapshotPresentation.create(snapshot)
     val stateText = when (snapshot.standby) {
         StandbyState.ON -> "On"
         StandbyState.OFF -> "Off"
         StandbyState.UNKNOWN -> "Not checked"
     }
-    val checkedText = if (snapshot.lastChecked > 0L) {
-        "Last checked: ${Alerts.clockTime(LocalContext.current, snapshot.lastChecked)}"
-    } else {
-        "State not checked yet"
-    }
+    val checkedText = display.checkedLine(
+        snapshot.lastChecked.takeIf { it > 0L }?.let {
+            Alerts.clockTime(LocalContext.current, it)
+        }
+    )
     val operationText = when (operation) {
         BleOperationKind.MANUAL_CHECK,
         BleOperationKind.NOTIFICATION_CHECK,
@@ -464,6 +497,10 @@ private fun StandbyCard(
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(checkedText, color = Muted, fontSize = 12.sp)
+                if (display.verificationMessage != null) {
+                    Spacer(Modifier.height(5.dp))
+                    Text(display.verificationMessage, color = Warn, fontSize = 11.sp)
+                }
                 if (detail != null) {
                     Spacer(Modifier.height(5.dp))
                     Text(detail, color = if (isOn) Warn else Muted, fontSize = 11.sp)

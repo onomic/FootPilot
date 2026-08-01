@@ -9,6 +9,7 @@ object Prefs {
     private const val SNAPSHOT_STANDBY = "snapshot_standby"
     private const val LAST_CHECKED = "last_checked"
     private const val COMPLETE_SNAPSHOT_V1 = "complete_snapshot_v1"
+    private const val SNAPSHOT_COMPLETENESS = "snapshot_completeness"
     private fun p(ctx: Context) = ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
     fun threshold(ctx: Context): Int = p(ctx).getInt("threshold", FootConfig.DEFAULT_LOW_BATTERY_THRESHOLD)
@@ -31,7 +32,7 @@ object Prefs {
     fun pairingCode(ctx: Context): String = p(ctx).getString("pairing_code", "") ?: ""
     fun setPairingCode(ctx: Context, v: String) = p(ctx).edit().putString("pairing_code", v.trim()).apply()
 
-    /** The last complete, mutually verified battery + standby snapshot. */
+    /** Last complete battery/time plus the confirmed standby and completeness metadata. */
     fun snapshot(ctx: Context): SnapshotState {
         val prefs = p(ctx)
         val battery = if (prefs.contains(SNAPSHOT_BATTERY)) {
@@ -39,34 +40,53 @@ object Prefs {
         } else {
             null
         }
-        return SnapshotState(
-            batteryLevel = battery,
-            standby = StandbyState.fromPersisted(prefs.getString(SNAPSHOT_STANDBY, null)),
-            // Ignore the legacy battery-only timestamp until this version writes snapshot data.
-            lastChecked = if (prefs.getBoolean(COMPLETE_SNAPSHOT_V1, false)) {
-                prefs.getLong(LAST_CHECKED, 0L)
-            } else {
-                0L
-            }
+        return SnapshotPersistence.decode(
+            StoredSnapshot(
+                batteryLevel = battery,
+                standbyName = prefs.getString(SNAPSHOT_STANDBY, null),
+                lastChecked = prefs.getLong(LAST_CHECKED, 0L),
+                hasCompleteSnapshotV1 = prefs.getBoolean(COMPLETE_SNAPSHOT_V1, false),
+                completenessName = prefs.getString(SNAPSHOT_COMPLETENESS, null)
+            )
         )
     }
 
-    /** One editor transaction keeps all three verified snapshot fields coherent. */
+    /** One editor transaction keeps all verified snapshot fields coherent. */
     fun saveCompleteSnapshot(ctx: Context, snapshot: SnapshotState) {
         require(snapshot.batteryLevel != null && snapshot.batteryLevel in 0..100)
         require(snapshot.standby != StandbyState.UNKNOWN)
         require(snapshot.lastChecked > 0L)
+        require(snapshot.completeness == SnapshotCompleteness.COMPLETE)
+        val stored = SnapshotPersistence.encode(snapshot)
         p(ctx).edit()
-            .putInt(SNAPSHOT_BATTERY, snapshot.batteryLevel!!)
-            .putString(SNAPSHOT_STANDBY, snapshot.standby.name)
-            .putLong(LAST_CHECKED, snapshot.lastChecked)
+            .putInt(SNAPSHOT_BATTERY, requireNotNull(stored.batteryLevel))
+            .putString(SNAPSHOT_STANDBY, stored.standbyName)
+            .putLong(LAST_CHECKED, stored.lastChecked)
             .putBoolean(COMPLETE_SNAPSHOT_V1, true)
+            .putString(SNAPSHOT_COMPLETENESS, stored.completenessName)
             .apply()
     }
 
-    /** Used only when a standby change is confirmed without a later successful battery read. */
-    fun saveStandbyOnly(ctx: Context, standby: StandbyState) {
-        p(ctx).edit().putString(SNAPSHOT_STANDBY, standby.name).apply()
+    /**
+     * Persists a confirmed standby state while retaining the preceding complete battery/time.
+     * Known prior fields are repeated in this same editor transaction; missing legacy fields are
+     * left untouched rather than deleted.
+     */
+    fun savePendingSnapshot(ctx: Context, snapshot: SnapshotState) {
+        require(snapshot.standby != StandbyState.UNKNOWN)
+        require(
+            snapshot.completeness == SnapshotCompleteness.STANDBY_CONFIRMED_BATTERY_PENDING
+        )
+        val stored = SnapshotPersistence.encode(snapshot)
+        val editor = p(ctx).edit()
+            .putString(SNAPSHOT_STANDBY, stored.standbyName)
+            .putString(SNAPSHOT_COMPLETENESS, stored.completenessName)
+        stored.batteryLevel?.let { editor.putInt(SNAPSHOT_BATTERY, it) }
+        if (stored.hasCompleteSnapshotV1) {
+            editor.putLong(LAST_CHECKED, stored.lastChecked)
+                .putBoolean(COMPLETE_SNAPSHOT_V1, true)
+        }
+        editor.apply()
     }
 
     fun lastChecked(ctx: Context): Long = snapshot(ctx).lastChecked

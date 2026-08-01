@@ -55,7 +55,8 @@ object Alerts {
             ctx = ctx,
             ongoing = true,
             statusText = statusText,
-            includeActions = statusText == null && actionsAreSafe(ctx)
+            includeActions = statusText == null && actionsAreSafe(ctx),
+            liveBatteryLevel = BatteryRepo.level.value
         )
         ctx.getSystemService(NotificationManager::class.java).notify(ONGOING_ID, notification)
     }
@@ -71,7 +72,8 @@ object Alerts {
             ctx = ctx,
             ongoing = true,
             statusText = null,
-            includeActions = actionsAreSafe(ctx)
+            includeActions = actionsAreSafe(ctx),
+            liveBatteryLevel = null
         )
         ctx.getSystemService(NotificationManager::class.java).notify(POLL_STATUS_ID, notification)
     }
@@ -101,16 +103,50 @@ object Alerts {
 
     /** Foreground-service notification shown immediately for a notification action. */
     fun operationNotification(ctx: Context, text: String): Notification =
-        buildStateNotification(ctx, ongoing = true, statusText = text, includeActions = false)
+        buildStateNotification(
+            ctx = ctx,
+            ongoing = true,
+            statusText = text,
+            includeActions = false,
+            liveBatteryLevel = BatteryRepo.level.value.takeIf {
+                LiveConnection.isMonitoringRequested()
+            }
+        )
+
+    /** Refreshes only the live-monitoring notification for a battery notification. */
+    fun refreshLiveBattery(ctx: Context) {
+        if (!LiveConnection.isMonitoringRequested()) return
+        val statusText = BleOperationCoordinator.state.value.visibleOperation?.statusText
+        val notification = buildStateNotification(
+            ctx = ctx,
+            ongoing = true,
+            statusText = statusText,
+            includeActions = statusText == null && actionsAreSafe(ctx),
+            liveBatteryLevel = BatteryRepo.level.value
+        )
+        ctx.getSystemService(NotificationManager::class.java).notify(ONGOING_ID, notification)
+    }
 
     private fun postApplicable(ctx: Context, statusText: String?, includeActions: Boolean) {
         when {
             LiveConnection.isMonitoringRequested() -> {
-                val notification = buildStateNotification(ctx, true, statusText, includeActions)
+                val notification = buildStateNotification(
+                    ctx,
+                    true,
+                    statusText,
+                    includeActions,
+                    BatteryRepo.level.value
+                )
                 ctx.getSystemService(NotificationManager::class.java).notify(ONGOING_ID, notification)
             }
             Prefs.polling(ctx) -> {
-                val notification = buildStateNotification(ctx, true, statusText, includeActions)
+                val notification = buildStateNotification(
+                    ctx,
+                    true,
+                    statusText,
+                    includeActions,
+                    liveBatteryLevel = null
+                )
                 ctx.getSystemService(NotificationManager::class.java).notify(POLL_STATUS_ID, notification)
             }
         }
@@ -120,26 +156,25 @@ object Alerts {
         ctx: Context,
         ongoing: Boolean,
         statusText: String?,
-        includeActions: Boolean
+        includeActions: Boolean,
+        liveBatteryLevel: Int?
     ): Notification {
         val snapshot = BatteryRepo.snapshot.value
-        val batteryLine = snapshot.batteryLevel?.let { "Battery $it%" } ?: "Battery —"
-        val standbyLine = when (snapshot.standby) {
-            StandbyState.ON -> "Standby on"
-            StandbyState.OFF -> "Standby off"
-            StandbyState.UNKNOWN -> "Standby not checked"
-        }
-        val checkedLine = if (snapshot.lastChecked > 0L) {
-            "Last checked: ${clockTime(ctx, snapshot.lastChecked)}"
-        } else {
-            "State not checked yet"
-        }
-        val collapsed = statusText ?: "$standbyLine · $checkedLine"
+        val display = SnapshotPresentation.create(snapshot, liveBatteryLevel)
+        val batteryLine = display.batteryLine
+        val standbyLine = display.standbyLine
+        val checkedLine = display.checkedLine(
+            snapshot.lastChecked.takeIf { it > 0L }?.let { clockTime(ctx, it) }
+        )
+        val collapsed = statusText ?: display.verificationMessage?.let {
+            "$standbyLine · $it"
+        } ?: "$standbyLine · $checkedLine"
 
         val style = NotificationCompat.InboxStyle()
             .addLine(batteryLine)
             .addLine(standbyLine)
             .addLine(checkedLine)
+        display.verificationMessage?.let { style.addLine(it) }
         if (statusText != null) style.addLine(statusText)
 
         val builder = NotificationCompat.Builder(ctx, ONGOING_CH)
@@ -153,7 +188,7 @@ object Alerts {
 
         if (includeActions) {
             builder.addAction(operationAction(ctx, ACTION_CHECK_NOW, "Check now", REQUEST_CHECK_NOW))
-            when (snapshot.standby) {
+            when (display.standby) {
                 StandbyState.ON -> builder.addAction(
                     operationAction(ctx, ACTION_STANDBY_OFF, "Turn standby off", REQUEST_STANDBY_OFF)
                 )
@@ -220,12 +255,10 @@ object Alerts {
     /** Live values can alert without mutating the persisted complete snapshot timestamp. */
     fun maybeAlert(ctx: Context, pct: Int) {
         val threshold = Prefs.threshold(ctx)
-        if (pct < threshold && Prefs.armed(ctx)) {
-            showLow(ctx, pct)
-            Prefs.setArmed(ctx, false)
-        } else if (pct >= threshold) {
-            Prefs.setArmed(ctx, true)
-        }
+        val wasArmed = Prefs.armed(ctx)
+        val decision = LowBatteryAlertReducer.reduce(wasArmed, pct, threshold)
+        if (decision.shouldAlert) showLow(ctx, pct)
+        if (decision.armed != wasArmed) Prefs.setArmed(ctx, decision.armed)
     }
 
     private fun showLow(ctx: Context, pct: Int) {

@@ -6,7 +6,11 @@
 > standby over Össur AA01 and then reads battery; both values and one timestamp are persisted
 > atomically. AA01 and AA02 notifications are initialized in callback order before use. The
 > only proprietary commands are the confirmed standby query/on/off packets. The dormant
-> `BatteryService` and battery-only `BleReader` paths were removed.
+> `BatteryService` and battery-only `BleReader` paths were removed. A valid battery read still
+> updates the live display and low-battery arming/alert logic when standby verification fails,
+> without advancing the complete snapshot timestamp. Live monitoring notifications use that live
+> battery value while standby and time remain snapshot-backed. A confirmed standby change followed
+> by battery failure is persisted as battery-pending and remains visibly incomplete after restart.
 
 **Purpose of this document:** complete context for the FootBattery Android app so work can
 continue in a fresh session without losing any decisions or state. Last updated at the point

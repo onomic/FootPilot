@@ -45,7 +45,11 @@ object BatteryRepo {
         standbyStatus.value = ""
     }
 
-    fun applyStandbyOnly(value: StandbyState) {
-        snapshot.value = snapshot.value.copy(standby = value)
+    /** Applies confirmed standby metadata without replacing a newer live battery value. */
+    fun applyPendingSnapshot(value: SnapshotState) {
+        require(
+            value.completeness == SnapshotCompleteness.STANDBY_CONFIRMED_BATTERY_PENDING
+        )
+        snapshot.value = value
     }
 }

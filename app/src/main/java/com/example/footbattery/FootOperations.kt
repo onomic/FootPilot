@@ -177,11 +177,11 @@ object FootOperations {
                 checkedAt = System.currentTimeMillis()
             )
         )
+        applyFreshBattery(ctx, reduction.freshBatteryLevel)
 
         if (reduction.completeSnapshotSaved) {
             Prefs.saveCompleteSnapshot(ctx, reduction.snapshot)
             BatteryRepo.applySnapshot(reduction.snapshot)
-            Alerts.maybeAlert(ctx, reduction.snapshot.batteryLevel!!)
             BatteryRepo.status.value = when (origin) {
                 CheckOrigin.SCHEDULED -> "Checked (background)"
                 CheckOrigin.LIVE_INITIAL, CheckOrigin.LIVE_RECONNECT -> "Monitoring"
@@ -215,21 +215,24 @@ object FootOperations {
                 ambiguous = read.ambiguous
             )
         )
+        applyFreshBattery(ctx, reduction.freshBatteryLevel)
 
         if (reduction.completeSnapshotSaved) {
             Prefs.saveCompleteSnapshot(ctx, reduction.snapshot)
             BatteryRepo.applySnapshot(reduction.snapshot)
-            Alerts.maybeAlert(ctx, reduction.snapshot.batteryLevel!!)
             val message = "Standby ${requested.displayName()} confirmed"
             BatteryRepo.status.value = message
             BatteryRepo.standbyStatus.value = ""
             return FootOperationResult.Complete(reduction.snapshot)
         }
 
-        val stateChanged = reduction.snapshot.standby != previous.standby
-        if (stateChanged || reduction.standbyChangeConfirmed) {
-            Prefs.saveStandbyOnly(ctx, reduction.snapshot.standby)
-            BatteryRepo.applyStandbyOnly(reduction.snapshot.standby)
+        val snapshotChanged = reduction.snapshot != previous
+        if ((snapshotChanged || reduction.standbyChangeConfirmed) &&
+            reduction.snapshot.completeness ==
+            SnapshotCompleteness.STANDBY_CONFIRMED_BATTERY_PENDING
+        ) {
+            Prefs.savePendingSnapshot(ctx, reduction.snapshot)
+            BatteryRepo.applyPendingSnapshot(reduction.snapshot)
         }
 
         if (reduction.standbyChangeConfirmed && read.batteryLevel == null) {
@@ -274,6 +277,14 @@ object FootOperations {
         } finally {
             session.disconnectAndClose(removeBond = true)
         }
+    }
+
+    private fun applyFreshBattery(ctx: Context, batteryLevel: Int?) {
+        FreshBatteryResultHandler.handle(
+            batteryLevel = batteryLevel,
+            updateLiveLevel = { BatteryRepo.level.value = it },
+            evaluateLowBattery = { Alerts.maybeAlert(ctx, it) }
+        )
     }
 
     private fun partialCheckMessage(read: FullSnapshotRead): String = when {

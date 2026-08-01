@@ -29,7 +29,56 @@ class SnapshotReducerTest {
         )
 
         assertEquals(previous, result.snapshot)
+        assertEquals(100L, result.snapshot.lastChecked)
         assertFalse(result.completeSnapshotSaved)
+    }
+
+    @Test fun batteryOnlyDoesNotReplacePersistedCompleteSnapshot() {
+        val result = SnapshotReducer.reduce(
+            previous,
+            SnapshotEvent.NormalCheck(12, standby = null, checkedAt = 200L)
+        )
+
+        assertEquals(previous, result.snapshot)
+        assertFalse(result.completeSnapshotSaved)
+    }
+
+    @Test fun batteryOnlyProducesFreshLiveValueAndRunsLowBatteryEvaluation() {
+        val result = SnapshotReducer.reduce(
+            previous,
+            SnapshotEvent.NormalCheck(12, standby = null, checkedAt = 200L)
+        )
+        var liveLevel: Int? = null
+        var evaluatedLevel: Int? = null
+
+        val handled = FreshBatteryResultHandler.handle(
+            result.freshBatteryLevel,
+            updateLiveLevel = { liveLevel = it },
+            evaluateLowBattery = { evaluatedLevel = it }
+        )
+
+        assertTrue(handled)
+        assertEquals(12, liveLevel)
+        assertEquals(12, evaluatedLevel)
+    }
+
+    @Test fun recoveryBatteryRearmsAlertEvenWhenStandbyFails() {
+        val result = SnapshotReducer.reduce(
+            previous,
+            SnapshotEvent.NormalCheck(80, standby = null, checkedAt = 200L)
+        )
+        var armed = false
+
+        FreshBatteryResultHandler.handle(
+            result.freshBatteryLevel,
+            updateLiveLevel = {},
+            evaluateLowBattery = { level ->
+                armed = LowBatteryAlertReducer.reduce(armed, level, threshold = 25).armed
+            }
+        )
+
+        assertTrue(armed)
+        assertTrue(LowBatteryAlertReducer.reduce(armed, 12, threshold = 25).shouldAlert)
     }
 
     @Test fun standbyQueryOnlyDoesNotAdvanceCompleteSnapshot() {
@@ -54,9 +103,34 @@ class SnapshotReducerTest {
             )
         )
 
-        assertEquals(SnapshotState(70, StandbyState.ON, 100L), result.snapshot)
+        assertEquals(
+            SnapshotState(
+                70,
+                StandbyState.ON,
+                100L,
+                SnapshotCompleteness.STANDBY_CONFIRMED_BATTERY_PENDING
+            ),
+            result.snapshot
+        )
         assertTrue(result.standbyChangeConfirmed)
         assertFalse(result.completeSnapshotSaved)
+    }
+
+    @Test fun laterCompleteSnapshotClearsBatteryPendingState() {
+        val pending = previous.copy(
+            standby = StandbyState.ON,
+            completeness = SnapshotCompleteness.STANDBY_CONFIRMED_BATTERY_PENDING
+        )
+
+        val result = SnapshotReducer.reduce(
+            pending,
+            SnapshotEvent.NormalCheck(82, StandbyState.ON, checkedAt = 300L)
+        )
+
+        assertEquals(SnapshotCompleteness.COMPLETE, result.snapshot.completeness)
+        assertEquals(82, result.snapshot.batteryLevel)
+        assertEquals(300L, result.snapshot.lastChecked)
+        assertTrue(result.completeSnapshotSaved)
     }
 
     @Test fun failedStandbyConfirmationDoesNotClaimSuccess() {
@@ -74,5 +148,40 @@ class SnapshotReducerTest {
         assertEquals(previous, result.snapshot)
         assertFalse(result.standbyChangeConfirmed)
         assertFalse(result.completeSnapshotSaved)
+    }
+
+    @Test fun ambiguousStandbyFailurePreservesLastConfirmedSnapshot() {
+        val result = SnapshotReducer.reduce(
+            previous,
+            SnapshotEvent.StandbyChange(
+                requested = StandbyState.ON,
+                finalState = null,
+                verified = false,
+                batteryLevel = null,
+                checkedAt = 200L,
+                ambiguous = true
+            )
+        )
+
+        assertEquals(previous, result.snapshot)
+        assertFalse(result.standbyChangeConfirmed)
+        assertFalse(result.completeSnapshotSaved)
+    }
+
+    @Test fun missingFinalConfirmationDoesNotPersistRequestedStandby() {
+        val result = SnapshotReducer.reduce(
+            previous,
+            SnapshotEvent.StandbyChange(
+                requested = StandbyState.ON,
+                finalState = null,
+                verified = false,
+                batteryLevel = null,
+                checkedAt = 200L
+            )
+        )
+
+        assertEquals(StandbyState.OFF, result.snapshot.standby)
+        assertEquals(previous, result.snapshot)
+        assertFalse(result.standbyChangeConfirmed)
     }
 }

@@ -2,14 +2,18 @@
 
 An Android app for one configured Össur Proprio Foot. It reads the standard BLE battery
 level, reports low battery, and can query and change the foot's confirmed standby state.
-Battery and standby checks are saved as one verified snapshot.
+Battery and standby checks are saved as one verified snapshot. Live battery values can be newer
+than that snapshot; they update the gauge and live-monitoring notification without changing the
+snapshot's `Last checked` time.
 
 ## How the alert works
 
 A live in-process connection subscribes to battery updates while the app is running.
 Optional WorkManager polling briefly connects, obtains battery plus confirmed standby,
 then disconnects and removes the bond. Low-battery alerts re-arm after charging above the
-configured threshold, so they fire once per discharge rather than repeatedly.
+configured threshold, so they fire once per discharge rather than repeatedly. Every valid battery
+reading drives this safety behavior even if the accompanying standby check fails; an incomplete
+read does not replace the last complete snapshot.
 
 The alert threshold, pairing PIN, polling interval, and polling toggle are available in Settings.
 
@@ -38,6 +42,10 @@ Pick whichever path fits what you have.
 3. Save the pairing PIN in Settings if the foot requires one.
 4. Tap **Check now** for a complete battery/standby snapshot, or **Start** for live monitoring.
 5. Once standby has been checked, use the standby switch in the app or notification.
+
+If a standby change is confirmed but its follow-up battery read fails, the confirmed standby state
+is retained across app restarts. The app marks the battery as not yet verified after that change and
+continues to label the preserved timestamp as the last complete check until a full check succeeds.
 
 ## Make background alerts reliable
 
