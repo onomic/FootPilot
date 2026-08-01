@@ -69,6 +69,122 @@ class MainScreenPresentationTest {
         assertEquals(120f, tall.cardMinHeightDp, 0f)
     }
 
+    @Test fun heightClassesExposeCenteredHierarchySpacing() {
+        val compact = mainScreenLayoutSpec(640f, 1f)
+        val regular = mainScreenLayoutSpec(760f, 1f)
+        val tall = mainScreenLayoutSpec(900f, 1f)
+
+        assertEquals(12f, compact.gaugeToDeviceGapDp, 0f)
+        assertEquals(14f, regular.gaugeToDeviceGapDp, 0f)
+        assertEquals(16f, tall.gaugeToDeviceGapDp, 0f)
+        assertEquals(4f, compact.deviceToThresholdGapDp, 0f)
+        assertEquals(4f, regular.deviceToThresholdGapDp, 0f)
+        assertEquals(4f, tall.deviceToThresholdGapDp, 0f)
+        assertEquals(16f, compact.metadataToCardGapDp, 0f)
+        assertEquals(16f, regular.metadataToCardGapDp, 0f)
+        assertEquals(18f, tall.metadataToCardGapDp, 0f)
+        assertEquals(8f, compact.cardToStatusGapDp, 0f)
+        assertEquals(8f, regular.cardToStatusGapDp, 0f)
+        assertEquals(10f, tall.cardToStatusGapDp, 0f)
+
+        listOf(compact, regular, tall).forEach { layout ->
+            assertTrue(layout.metadataToCardGapDp > 0f)
+            assertTrue(layout.cardToStatusGapDp > 0f)
+        }
+    }
+
+    @Test fun readyLiveConnectionResolvesToLive() {
+        val presentation = mainScreenModePresentation(
+            liveReady = true,
+            monitoringActive = false,
+            pollingEnabled = false
+        )
+
+        assertEquals(MainScreenMode.LIVE, presentation.mode)
+        assertEquals("LIVE", presentation.label)
+    }
+
+    @Test fun liveTakesPriorityEvenWhenPollingIsEnabled() {
+        val presentation = mainScreenModePresentation(
+            liveReady = true,
+            monitoringActive = true,
+            pollingEnabled = true
+        )
+
+        assertEquals(MainScreenMode.LIVE, presentation.mode)
+    }
+
+    @Test fun inactiveMonitoringWithPollingEnabledResolvesToPolling() {
+        val presentation = mainScreenModePresentation(
+            liveReady = false,
+            monitoringActive = false,
+            pollingEnabled = true
+        )
+
+        assertEquals(MainScreenMode.POLLING, presentation.mode)
+        assertEquals("POLLING", presentation.label)
+    }
+
+    @Test fun activeMonitoringThatIsNotReadyDoesNotResolveToPolling() {
+        val presentation = mainScreenModePresentation(
+            liveReady = false,
+            monitoringActive = true,
+            pollingEnabled = true
+        )
+
+        assertEquals(MainScreenMode.IDLE, presentation.mode)
+    }
+
+    @Test fun neitherLiveNorPollingResolvesToIdle() {
+        val presentation = mainScreenModePresentation(
+            liveReady = false,
+            monitoringActive = false,
+            pollingEnabled = false
+        )
+
+        assertEquals(MainScreenMode.IDLE, presentation.mode)
+        assertEquals("IDLE", presentation.label)
+    }
+
+    @Test fun liveModePulses() {
+        assertTrue(
+            mainScreenModePresentation(
+                liveReady = true,
+                monitoringActive = true,
+                pollingEnabled = false
+            ).pulses
+        )
+    }
+
+    @Test fun pollingModeDoesNotPulse() {
+        assertFalse(
+            mainScreenModePresentation(
+                liveReady = false,
+                monitoringActive = false,
+                pollingEnabled = true
+            ).pulses
+        )
+    }
+
+    @Test fun idleModeDoesNotPulse() {
+        assertFalse(
+            mainScreenModePresentation(
+                liveReady = false,
+                monitoringActive = false,
+                pollingEnabled = false
+            ).pulses
+        )
+    }
+
+    @Test fun liveAndPollingModesUseActiveColorMetadata() {
+        assertTrue(mainScreenModePresentation(true, true, false).usesActiveColor)
+        assertTrue(mainScreenModePresentation(false, false, true).usesActiveColor)
+    }
+
+    @Test fun idleModeUsesInactiveColorMetadata() {
+        assertFalse(mainScreenModePresentation(false, false, false).usesActiveColor)
+    }
+
     @Test fun activeOperationOverridesVerificationAndOtherStatuses() {
         val presentation = MainScreenPresentation.create(
             activeOperationText = "Turning standby on...",

@@ -218,6 +218,7 @@ class MainActivity : ComponentActivity() {
                         operation = coordination.visibleOperation,
                         bluetoothAvailable = bluetoothAvailable,
                         threshold = threshold,
+                        pollingEnabled = polling,
                         onStart = ::startMonitoring,
                         onStop = ::requestStopMonitoring,
                         onCheck = ::checkNow,
@@ -373,6 +374,7 @@ private fun MainScreen(
     operation: BleOperationKind?,
     bluetoothAvailable: Boolean,
     threshold: Int,
+    pollingEnabled: Boolean,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onCheck: () -> Unit,
@@ -383,6 +385,11 @@ private fun MainScreen(
     val ready = connectionState == LiveConnectionState.READY
     val busy = operation != null
     val canUseConnection = !running || ready
+    val modePresentation = mainScreenModePresentation(
+        liveReady = ready,
+        monitoringActive = running,
+        pollingEnabled = pollingEnabled
+    )
     val display = SnapshotPresentation.create(snapshot)
     val presentation = MainScreenPresentation.create(
         activeOperationText = mainScreenOperationText(operation),
@@ -405,7 +412,7 @@ private fun MainScreen(
             ),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            MainHeader(ready = ready, onSettings = onSettings)
+            MainHeader(presentation = modePresentation, onSettings = onSettings)
 
             Spacer(Modifier.height(layout.headerToGaugeGapDp.dp))
             BatteryGauge(
@@ -415,11 +422,13 @@ private fun MainScreen(
                 valueFontSizeSp = layout.gaugeValueFontSizeSp,
                 percentFontSizeSp = layout.gaugePercentFontSizeSp
             )
-            Spacer(Modifier.height(layout.gaugeToMetadataGapDp.dp))
+            Spacer(Modifier.height(layout.gaugeToDeviceGapDp.dp))
 
-            DeviceMetadataRow(threshold = threshold)
-
-            Spacer(Modifier.weight(1f))
+            DeviceMetadata(
+                threshold = threshold,
+                deviceToThresholdGap = layout.deviceToThresholdGapDp.dp
+            )
+            Spacer(Modifier.height(layout.metadataToCardGapDp.dp))
 
             StandbyCard(
                 display = display,
@@ -433,7 +442,7 @@ private fun MainScreen(
                 presentation = presentation,
                 height = layout.statusSlotHeightDp.dp
             )
-            Spacer(Modifier.height(layout.statusToActionsGapDp.dp))
+            Spacer(Modifier.weight(1f))
             ContextualActionRow(
                 accent = accent,
                 running = running,
@@ -451,7 +460,7 @@ private fun MainScreen(
 
 @Composable
 private fun MainHeader(
-    ready: Boolean,
+    presentation: MainScreenModePresentation,
     onSettings: () -> Unit
 ) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -462,34 +471,40 @@ private fun MainHeader(
             }
             Text("BLE · 0x180F", color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
         }
-        StatusPill(ready)
+        StatusPill(presentation)
         Spacer(Modifier.width(4.dp))
         IconButton(onClick = onSettings) { Text("\u2699", color = Muted, fontSize = 22.sp) }
     }
 }
 
 @Composable
-private fun DeviceMetadataRow(threshold: Int) {
-    Row(
+private fun DeviceMetadata(
+    threshold: Int,
+    deviceToThresholdGap: Dp
+) {
+    Column(
         Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            FootConfig.TARGET_NAME,
+            text = FootConfig.TARGET_NAME,
             color = Ink,
             fontSize = 14.sp,
             fontFamily = FontFamily.Monospace,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
         )
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.height(deviceToThresholdGap))
         Text(
-            "Alerts below $threshold%",
+            text = "Alerts below $threshold%",
             color = Muted,
             fontSize = 12.sp,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
         )
     }
 }
@@ -652,20 +667,33 @@ private fun StandbyCard(
 }
 
 @Composable
-private fun StatusPill(live: Boolean) {
-    val infinite = rememberInfiniteTransition(label = "pulse")
-    val alpha by infinite.animateFloat(
-        initialValue = 1f, targetValue = 0.3f,
-        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "dot"
-    )
-    val dotColor = if (live) Accent else Muted
+private fun StatusPill(presentation: MainScreenModePresentation) {
+    val dotAlpha = if (presentation.pulses) {
+        val infinite = rememberInfiniteTransition(label = "pulse")
+        val alpha by infinite.animateFloat(
+            initialValue = 1f,
+            targetValue = 0.3f,
+            animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+            label = "dot"
+        )
+        alpha
+    } else {
+        1f
+    }
+    val dotColor = if (presentation.usesActiveColor) Accent else Muted
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier.size(8.dp).clip(CircleShape)
-                .background(dotColor.copy(alpha = if (live) alpha else 1f))
+                .background(dotColor.copy(alpha = dotAlpha))
         )
         Spacer(Modifier.width(6.dp))
-        Text(if (live) "LIVE" else "IDLE", color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+        Text(
+            text = presentation.label,
+            color = Muted,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1
+        )
     }
 }
 

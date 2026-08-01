@@ -14,11 +14,12 @@ data class MainScreenLayoutSpec(
     val gaugeSizeDp: Float,
     val gaugeValueFontSizeSp: Float,
     val gaugePercentFontSizeSp: Float,
-    val gaugeToMetadataGapDp: Float,
+    val gaugeToDeviceGapDp: Float,
+    val deviceToThresholdGapDp: Float,
+    val metadataToCardGapDp: Float,
     val cardMinHeightDp: Float,
     val cardToStatusGapDp: Float,
     val statusSlotHeightDp: Float,
-    val statusToActionsGapDp: Float,
     val actionGapDp: Float
 )
 
@@ -48,11 +49,12 @@ fun mainScreenLayoutSpec(
             gaugeSizeDp = 196f,
             gaugeValueFontSizeSp = 56f,
             gaugePercentFontSizeSp = 18f,
-            gaugeToMetadataGapDp = 12f,
+            gaugeToDeviceGapDp = 12f,
+            deviceToThresholdGapDp = 4f,
+            metadataToCardGapDp = 16f,
             cardMinHeightDp = 112f,
             cardToStatusGapDp = 8f,
             statusSlotHeightDp = 36f,
-            statusToActionsGapDp = 8f,
             actionGapDp = 8f
         )
         MainScreenHeightClass.REGULAR -> MainScreenLayoutSpec(
@@ -63,11 +65,12 @@ fun mainScreenLayoutSpec(
             gaugeSizeDp = 212f,
             gaugeValueFontSizeSp = 60f,
             gaugePercentFontSizeSp = 20f,
-            gaugeToMetadataGapDp = 14f,
+            gaugeToDeviceGapDp = 14f,
+            deviceToThresholdGapDp = 4f,
+            metadataToCardGapDp = 16f,
             cardMinHeightDp = 118f,
-            cardToStatusGapDp = 9f,
+            cardToStatusGapDp = 8f,
             statusSlotHeightDp = 36f,
-            statusToActionsGapDp = 9f,
             actionGapDp = 9f
         )
         MainScreenHeightClass.TALL -> MainScreenLayoutSpec(
@@ -78,12 +81,59 @@ fun mainScreenLayoutSpec(
             gaugeSizeDp = 220f,
             gaugeValueFontSizeSp = 64f,
             gaugePercentFontSizeSp = 21f,
-            gaugeToMetadataGapDp = 16f,
+            gaugeToDeviceGapDp = 16f,
+            deviceToThresholdGapDp = 4f,
+            metadataToCardGapDp = 18f,
             cardMinHeightDp = 120f,
             cardToStatusGapDp = 10f,
             statusSlotHeightDp = 36f,
-            statusToActionsGapDp = 10f,
             actionGapDp = 10f
+        )
+    }
+}
+
+enum class MainScreenMode {
+    LIVE,
+    POLLING,
+    IDLE
+}
+
+data class MainScreenModePresentation(
+    val mode: MainScreenMode,
+    val label: String,
+    val usesActiveColor: Boolean,
+    val pulses: Boolean
+)
+
+/** Resolves the header mode without implying polling during an active live session. */
+fun mainScreenModePresentation(
+    liveReady: Boolean,
+    monitoringActive: Boolean,
+    pollingEnabled: Boolean
+): MainScreenModePresentation {
+    val mode = when {
+        liveReady -> MainScreenMode.LIVE
+        pollingEnabled && !monitoringActive -> MainScreenMode.POLLING
+        else -> MainScreenMode.IDLE
+    }
+    return when (mode) {
+        MainScreenMode.LIVE -> MainScreenModePresentation(
+            mode = mode,
+            label = "LIVE",
+            usesActiveColor = true,
+            pulses = true
+        )
+        MainScreenMode.POLLING -> MainScreenModePresentation(
+            mode = mode,
+            label = "POLLING",
+            usesActiveColor = true,
+            pulses = false
+        )
+        MainScreenMode.IDLE -> MainScreenModePresentation(
+            mode = mode,
+            label = "IDLE",
+            usesActiveColor = false,
+            pulses = false
         )
     }
 }
