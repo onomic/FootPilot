@@ -45,7 +45,7 @@ class NotificationStateTest {
 
         assertEquals("Battery 85%", content.title)
         assertEquals(
-            listOf("Standby on", "Last checked: 2:34 a.m."),
+            listOf("Standby on", "Ankle angle unknown", "Last checked: 2:34 a.m."),
             content.expandedLines
         )
         assertFalse(content.expandedLines.contains("Battery 85%"))
@@ -66,7 +66,12 @@ class NotificationStateTest {
         )
 
         assertEquals(
-            listOf("Standby on", "Last complete check: 2:34 a.m.", warning),
+            listOf(
+                "Standby on",
+                "Ankle angle unknown",
+                "Last complete check: 2:34 a.m.",
+                warning
+            ),
             content.expandedLines
         )
         assertEquals(1, content.expandedLines.count { it == warning })
@@ -84,7 +89,12 @@ class NotificationStateTest {
         )
 
         assertEquals(
-            listOf("Standby on", "Last checked: 2:34 a.m.", transient),
+            listOf(
+                "Standby on",
+                "Ankle angle unknown",
+                "Last checked: 2:34 a.m.",
+                transient
+            ),
             content.expandedLines
         )
         assertEquals(1, content.expandedLines.count { it == transient })
@@ -140,7 +150,10 @@ class NotificationStateTest {
         )
 
         assertFalse(model.includeActions)
-        assertEquals(emptyList<StateNotificationAction>(), stateNotificationActions(model.display, false))
+        assertEquals(
+            emptyList<StateNotificationAction>(),
+            stateNotificationActions(model.display, confirmedAnkle(), false)
+        )
     }
 
     @Test fun ambiguousNotificationKeepsCheckNowAndOmitsStandbyAction() {
@@ -152,7 +165,7 @@ class NotificationStateTest {
 
         assertEquals(
             listOf(StateNotificationAction.CHECK_NOW),
-            stateNotificationActions(display, includeActions = true)
+            stateNotificationActions(display, confirmedAnkle(), includeActions = true)
         )
     }
 
@@ -167,8 +180,16 @@ class NotificationStateTest {
         assertEquals("Standby on confirmed", resultModel.statusText)
         assertTrue(resultModel.includeActions)
         assertEquals(
-            listOf(StateNotificationAction.CHECK_NOW, StateNotificationAction.STANDBY_ON),
-            stateNotificationActions(resultModel.display, resultModel.includeActions)
+            listOf(
+                StateNotificationAction.CHECK_NOW,
+                StateNotificationAction.STANDBY,
+                StateNotificationAction.AUTO
+            ),
+            stateNotificationActions(
+                resultModel.display,
+                confirmedAnkle(),
+                resultModel.includeActions
+            )
         )
 
         assertTrue(store.expire(token, nowMs = 10_000L))
@@ -176,6 +197,169 @@ class NotificationStateTest {
         assertNull(normalModel.statusText)
         assertTrue(normalModel.includeActions)
     }
+
+    @Test fun collapsedKnownStateIncludesExactPresetMatchAndSignedAngle() {
+        val content = StateNotificationContentPresentation.create(
+            display = SnapshotPresentation.create(snapshot.copy(batteryLevel = 93)),
+            ankle = confirmedAnkle(1800),
+            presets = PresetState(PresetTargets(runningMd = 1800), FootwearPreset.RUNNING),
+            formattedTime = "2:34 a.m.",
+            statusText = null
+        )
+
+        assertEquals("Battery 93%", content.title)
+        assertEquals("Battery", content.batteryLabel)
+        assertEquals("93%", content.batteryValue)
+        assertEquals("Standby off · Running shoes · +1.8°", content.collapsedText)
+        assertEquals("Running shoes · Confirmed +1.8°", content.angleSummaryText)
+        assertEquals("Running shoes", content.summaryPresetName)
+        assertEquals("Confirmed +1.8°", content.angleStatusText)
+        assertTrue(content.angleStatusConfirmed)
+        assertFalse(
+            listOf(
+                content.collapsedText,
+                content.angleSummaryText,
+                content.summaryPresetName,
+                content.angleStatusText
+            ).filterNotNull().any { "✓" in it }
+        )
+    }
+
+    @Test fun collapsedKnownStateWithoutMatchNeverInventsCustom() {
+        val content = StateNotificationContentPresentation.create(
+            display = SnapshotPresentation.create(snapshot),
+            ankle = confirmedAnkle(569),
+            presets = PresetState(PresetTargets(runningMd = 1800)),
+            formattedTime = null,
+            statusText = null
+        )
+
+        assertEquals("Standby off · +0.6°", content.collapsedText)
+        assertFalse(content.collapsedText.contains("Custom"))
+    }
+
+    @Test fun standbyOnLabelsRetainedAngleAsLastVerified() {
+        val content = StateNotificationContentPresentation.create(
+            display = SnapshotPresentation.create(snapshot.copy(standby = StandbyState.ON)),
+            ankle = confirmedAnkle(1800),
+            presets = PresetState(PresetTargets(runningMd = 1800), FootwearPreset.RUNNING),
+            formattedTime = null,
+            statusText = null
+        )
+
+        assertEquals("Standby on · Last verified +1.8°", content.collapsedText)
+        assertEquals("Last verified +1.8°", content.angleSummaryText)
+        assertNull(content.summaryPreset)
+        assertEquals(
+            listOf(StateNotificationAction.CHECK_NOW, StateNotificationAction.STANDBY),
+            stateNotificationActions(
+                SnapshotPresentation.create(snapshot.copy(standby = StandbyState.ON)),
+                confirmedAnkle(1800),
+                includeActions = true
+            )
+        )
+    }
+
+    @Test fun normalSafeActionOrderIsExactlyCheckStandbyAuto() {
+        assertEquals(
+            listOf(
+                StateNotificationAction.CHECK_NOW,
+                StateNotificationAction.STANDBY,
+                StateNotificationAction.AUTO
+            ),
+            stateNotificationActions(
+                SnapshotPresentation.create(snapshot),
+                confirmedAnkle(),
+                includeActions = true
+            )
+        )
+    }
+
+    @Test fun unknownAfterCommandNeverPresentsCachedAngleAsCurrent() {
+        val ankle = AnkleState(
+            lastVerifiedMd = 1800,
+            certainty = AnkleCertainty.UNKNOWN_AFTER_COMMAND
+        )
+        val content = StateNotificationContentPresentation.create(
+            display = SnapshotPresentation.create(snapshot),
+            ankle = ankle,
+            formattedTime = null,
+            statusText = null
+        )
+
+        assertEquals("Standby off", content.collapsedText)
+        assertEquals("Unknown · Last verified +1.8°", content.angleSummaryText)
+        assertFalse(content.angleSummaryText.contains("Confirmed"))
+    }
+
+    @Test fun failedFreshQueryLabelsPersistedAngleOnlyAsHistory() {
+        val ankle = AnkleState(
+            lastVerifiedMd = 1800,
+            certainty = AnkleCertainty.UNKNOWN
+        )
+        val content = StateNotificationContentPresentation.create(
+            display = SnapshotPresentation.create(snapshot),
+            ankle = ankle,
+            formattedTime = null,
+            statusText = null
+        )
+
+        assertEquals("Standby off · Ankle unknown", content.collapsedText)
+        assertEquals("Unknown · Last verified +1.8°", content.angleSummaryText)
+        assertFalse(content.angleSummaryText.contains("Confirmed"))
+        assertEquals(
+            listOf(StateNotificationAction.CHECK_NOW, StateNotificationAction.STANDBY),
+            stateNotificationActions(
+                SnapshotPresentation.create(snapshot),
+                ankle,
+                includeActions = true
+            )
+        )
+    }
+
+    @Test fun presetTargetsRequireConfiguredSafeConfirmedState() {
+        val presets = PresetState(PresetTargets(runningMd = 1800, bootsMd = 3000))
+        val display = SnapshotPresentation.create(snapshot)
+
+        assertEquals(
+            setOf(FootwearPreset.RUNNING, FootwearPreset.BOOTS),
+            notificationPresetActions(display, confirmedAnkle(), presets, includeActions = true)
+        )
+        assertEquals(
+            emptySet<FootwearPreset>(),
+            notificationPresetActions(
+                display,
+                AnkleState(certainty = AnkleCertainty.UNKNOWN_AFTER_COMMAND),
+                presets,
+                includeActions = true
+            )
+        )
+    }
+
+    @Test fun activePresetLabelHasNoCheckmarkAndUnavailableStateIsMuted() {
+        val active = notificationPresetPresentation(
+            preset = FootwearPreset.RUNNING,
+            physicallyActive = true,
+            actionable = true
+        )
+        val blocked = notificationPresetPresentation(
+            preset = FootwearPreset.RUNNING,
+            physicallyActive = true,
+            actionable = false
+        )
+
+        assertEquals("Running", active.label)
+        assertFalse(active.label.contains("✓"))
+        assertEquals(NotificationPresetVisualState.ACTIVE_ACTIONABLE, active.visualState)
+        assertEquals(NotificationPresetVisualState.ACTIVE_UNAVAILABLE, blocked.visualState)
+        assertTrue(blocked.cellAlpha < active.cellAlpha)
+        assertTrue(blocked.imageAlpha < active.imageAlpha)
+    }
+
+    private fun confirmedAnkle(md: Int = 1800) = AnkleState(
+        lastVerifiedMd = md,
+        certainty = AnkleCertainty.CONFIRMED
+    )
 
     private fun model(
         store: TransientStatusStore,

@@ -10,6 +10,13 @@ object Prefs {
     private const val LAST_CHECKED = "last_checked"
     private const val COMPLETE_SNAPSHOT_V1 = "complete_snapshot_v1"
     private const val SNAPSHOT_COMPLETENESS = "snapshot_completeness"
+    private const val ANKLE_MILLIDEGREES = "ankle_millidegrees"
+    private const val ANKLE_VERIFIED_AT = "ankle_verified_at"
+    private const val ANKLE_CERTAINTY = "ankle_certainty"
+    private const val PRESET_BAREFOOT_MD = "preset_barefoot_md"
+    private const val PRESET_RUNNING_MD = "preset_running_md"
+    private const val PRESET_DRESS_MD = "preset_dress_md"
+    private const val PRESET_BOOTS_MD = "preset_boots_md"
     private fun p(ctx: Context) = ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
     fun threshold(ctx: Context): Int = p(ctx).getInt("threshold", FootConfig.DEFAULT_LOW_BATTERY_THRESHOLD)
@@ -89,4 +96,56 @@ object Prefs {
     }
 
     fun lastChecked(ctx: Context): Long = snapshot(ctx).lastChecked
+
+    fun ankleState(ctx: Context): StoredAnkleState {
+        val prefs = p(ctx)
+        return StoredAnkleState(
+            millidegrees = if (prefs.contains(ANKLE_MILLIDEGREES)) {
+                prefs.getInt(ANKLE_MILLIDEGREES, 0)
+            } else {
+                null
+            },
+            verifiedAt = prefs.getLong(ANKLE_VERIFIED_AT, 0L).takeIf { it > 0L },
+            certaintyName = prefs.getString(ANKLE_CERTAINTY, null)
+        )
+    }
+
+    fun saveAnkleState(ctx: Context, state: AnkleState) {
+        val stored = AnklePersistence.encode(state)
+        val editor = p(ctx).edit().putString(ANKLE_CERTAINTY, stored.certaintyName)
+        if (stored.millidegrees == null) {
+            editor.remove(ANKLE_MILLIDEGREES).remove(ANKLE_VERIFIED_AT)
+        } else {
+            editor.putInt(ANKLE_MILLIDEGREES, stored.millidegrees)
+            stored.verifiedAt?.let { editor.putLong(ANKLE_VERIFIED_AT, it) }
+                ?: editor.remove(ANKLE_VERIFIED_AT)
+        }
+        editor.apply()
+    }
+
+    fun presetTargets(ctx: Context): PresetTargets {
+        val prefs = p(ctx)
+        fun target(key: String): Int? = if (prefs.contains(key)) {
+            prefs.getInt(key, 0).takeIf(AnkleProtocol::isSupported)
+        } else {
+            null
+        }
+        return PresetTargets(
+            barefootMd = target(PRESET_BAREFOOT_MD),
+            runningMd = target(PRESET_RUNNING_MD),
+            dressMd = target(PRESET_DRESS_MD),
+            bootsMd = target(PRESET_BOOTS_MD)
+        )
+    }
+
+    fun savePresetTarget(ctx: Context, preset: FootwearPreset, confirmedMd: Int) {
+        require(AnkleProtocol.isSupported(confirmedMd))
+        val key = when (preset) {
+            FootwearPreset.BAREFOOT -> PRESET_BAREFOOT_MD
+            FootwearPreset.RUNNING -> PRESET_RUNNING_MD
+            FootwearPreset.DRESS -> PRESET_DRESS_MD
+            FootwearPreset.BOOTS -> PRESET_BOOTS_MD
+        }
+        p(ctx).edit().putInt(key, confirmedMd).apply()
+    }
 }

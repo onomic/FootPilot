@@ -130,3 +130,20 @@ object SnapshotReducer {
         }
     }
 }
+
+/** Applies fresh standby truth learned by a movement preflight without fabricating a battery read. */
+fun snapshotAfterStandbyObservation(
+    previous: SnapshotState,
+    observed: StandbyState
+): SnapshotState {
+    require(observed != StandbyState.UNKNOWN)
+    if (previous.standby == observed &&
+        previous.completeness != SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND
+    ) {
+        return previous
+    }
+    return previous.copy(
+        standby = observed,
+        completeness = SnapshotCompleteness.STANDBY_CONFIRMED_BATTERY_PENDING
+    )
+}

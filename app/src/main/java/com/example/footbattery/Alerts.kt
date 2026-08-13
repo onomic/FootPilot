@@ -10,10 +10,13 @@ import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.View
+import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
@@ -26,13 +29,21 @@ object Alerts {
     const val POLL_STATUS_ID = 3
 
     const val ACTION_CHECK_NOW = "com.example.footbattery.CHECK_NOW"
-    const val ACTION_STANDBY_ON = "com.example.footbattery.STANDBY_ON"
-    const val ACTION_STANDBY_OFF = "com.example.footbattery.STANDBY_OFF"
+    const val ACTION_STANDBY = "com.example.footbattery.STANDBY"
+    const val ACTION_AUTO = "com.example.footbattery.AUTO_ALIGN"
+    const val ACTION_PRESET_BAREFOOT = "com.example.footbattery.PRESET_BAREFOOT"
+    const val ACTION_PRESET_RUNNING = "com.example.footbattery.PRESET_RUNNING"
+    const val ACTION_PRESET_DRESS = "com.example.footbattery.PRESET_DRESS"
+    const val ACTION_PRESET_BOOTS = "com.example.footbattery.PRESET_BOOTS"
 
     private const val REQUEST_OPEN_APP = 10
     private const val REQUEST_CHECK_NOW = 20
-    private const val REQUEST_STANDBY_ON = 21
-    private const val REQUEST_STANDBY_OFF = 22
+    private const val REQUEST_STANDBY = 23
+    private const val REQUEST_AUTO = 24
+    private const val REQUEST_PRESET_BAREFOOT = 30
+    private const val REQUEST_PRESET_RUNNING = 31
+    private const val REQUEST_PRESET_DRESS = 32
+    private const val REQUEST_PRESET_BOOTS = 33
     private const val TRANSIENT_STATUS_MS = 8_000L
 
     private val handler = Handler(Looper.getMainLooper())
@@ -51,6 +62,8 @@ object Alerts {
     /** Persistent notification for a live connection. */
     fun postOngoing(ctx: Context, statusText: String? = null) {
         BatteryRepo.ensureInitialized(ctx)
+        AnkleRepo.ensureInitialized(ctx)
+        PresetRepository.ensureInitialized(ctx)
         val notification = buildStateNotification(
             ctx = ctx,
             ongoing = true,
@@ -68,6 +81,8 @@ object Alerts {
     /** Persistent status notification while polling is enabled and live monitoring is off. */
     fun updatePollStatus(ctx: Context) {
         BatteryRepo.ensureInitialized(ctx)
+        AnkleRepo.ensureInitialized(ctx)
+        PresetRepository.ensureInitialized(ctx)
         val notification = buildStateNotification(
             ctx = ctx,
             ongoing = true,
@@ -194,39 +209,173 @@ object Alerts {
     ): Notification {
         val snapshot = BatteryRepo.snapshot.value
         val display = SnapshotPresentation.create(snapshot, liveBatteryLevel)
+        val ankle = AnkleRepo.state.value
+        val presets = PresetRepository.state.value
         val content = StateNotificationContentPresentation.create(
             display = display,
+            ankle = ankle,
+            presets = presets,
             formattedTime = snapshot.lastChecked.takeIf { it > 0L }?.let {
                 clockTime(ctx, it)
             },
             statusText = statusText
         )
-        val style = NotificationCompat.InboxStyle()
-        content.expandedLines.forEach { style.addLine(it) }
+        val collapsed = RemoteViews(ctx.packageName, R.layout.notification_state_collapsed).apply {
+            setTextViewText(R.id.notification_collapsed_battery_label, content.batteryLabel)
+            setTextViewText(R.id.notification_collapsed_battery_value, content.batteryValue)
+            setTextViewText(R.id.notification_collapsed_status, content.collapsedText)
+        }
+        val autoVisible = ankle.operation in setOf(
+            AnkleOperation.AUTO_STARTING,
+            AnkleOperation.AUTO_RUNNING,
+            AnkleOperation.VERIFYING
+        ) || statusText == "Automatic alignment" ||
+            statusText?.startsWith("Keep foot flat") == true
+        val expanded = if (autoVisible) {
+            RemoteViews(ctx.packageName, R.layout.notification_auto).apply {
+                setTextViewText(R.id.notification_auto_battery_label, content.batteryLabel)
+                setTextViewText(R.id.notification_auto_battery_value, content.batteryValue)
+                setTextViewText(R.id.notification_auto_title, "Automatic alignment")
+                setTextViewText(
+                    R.id.notification_auto_instruction,
+                    "Keep foot flat until the second beep, then lift your foot."
+                )
+            }
+        } else {
+            expandedStateViews(ctx, content, display, ankle, presets, includeActions)
+        }
 
         val builder = NotificationCompat.Builder(ctx, ONGOING_CH)
             .setSmallIcon(R.drawable.ic_battery)
             .setContentTitle(content.title)
             .setContentText(content.collapsedText)
-            .setStyle(style)
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .setCustomContentView(collapsed)
+            .setCustomBigContentView(expanded)
             .setOngoing(ongoing)
             .setOnlyAlertOnce(true)
             .setContentIntent(openApp(ctx))
 
-        stateNotificationActions(display, includeActions).forEach { action ->
+        stateNotificationActions(display, ankle, includeActions).forEach { action ->
             when (action) {
                 StateNotificationAction.CHECK_NOW -> builder.addAction(
-                    operationAction(ctx, ACTION_CHECK_NOW, "Check now", REQUEST_CHECK_NOW)
+                    operationAction(ctx, ACTION_CHECK_NOW, "Check", REQUEST_CHECK_NOW)
                 )
-                StateNotificationAction.STANDBY_ON -> builder.addAction(
-                    operationAction(ctx, ACTION_STANDBY_ON, "Turn standby on", REQUEST_STANDBY_ON)
+                StateNotificationAction.STANDBY -> builder.addAction(
+                    operationAction(ctx, ACTION_STANDBY, "Standby", REQUEST_STANDBY)
                 )
-                StateNotificationAction.STANDBY_OFF -> builder.addAction(
-                    operationAction(ctx, ACTION_STANDBY_OFF, "Turn standby off", REQUEST_STANDBY_OFF)
+                StateNotificationAction.AUTO -> builder.addAction(
+                    operationAction(ctx, ACTION_AUTO, "Auto", REQUEST_AUTO)
                 )
             }
         }
         return builder.build()
+    }
+
+    private fun expandedStateViews(
+        ctx: Context,
+        content: StateNotificationContent,
+        display: SnapshotDisplayState,
+        ankle: AnkleState,
+        presets: PresetState,
+        includeActions: Boolean
+    ): RemoteViews = RemoteViews(ctx.packageName, R.layout.notification_state_expanded).apply {
+        setTextViewText(R.id.notification_expanded_battery_label, content.batteryLabel)
+        setTextViewText(R.id.notification_expanded_battery_value, content.batteryValue)
+        setTextViewText(R.id.notification_expanded_standby, content.standbyText)
+        setTextViewText(R.id.notification_angle_text, content.angleStatusText)
+        if (content.angleStatusConfirmed) {
+            setTextColor(R.id.notification_angle_text, Color.parseColor("#34E0A1"))
+        }
+        val summary = content.summaryPreset
+        if (summary == null) {
+            setViewVisibility(R.id.notification_summary_image, View.GONE)
+            setViewVisibility(R.id.notification_summary_name, View.GONE)
+        } else {
+            setViewVisibility(R.id.notification_summary_image, View.VISIBLE)
+            setViewVisibility(R.id.notification_summary_name, View.VISIBLE)
+            setImageViewResource(R.id.notification_summary_image, presetDrawable(summary))
+            setTextViewText(R.id.notification_summary_name, content.summaryPresetName)
+        }
+        val operation = content.operationText
+        setViewVisibility(
+            R.id.notification_operation_status,
+            if (operation == null) View.GONE else View.VISIBLE
+        )
+        operation?.let { setTextViewText(R.id.notification_operation_status, it) }
+
+        val clickable = notificationPresetActions(display, ankle, presets, includeActions)
+        FootwearPreset.fixedOrder.forEach { preset ->
+            val active = display.standby == StandbyState.OFF && ankle.confirmedMd != null &&
+                presets.targets.target(preset) == ankle.confirmedMd
+            val presetPresentation = notificationPresetPresentation(
+                preset = preset,
+                physicallyActive = active,
+                actionable = preset in clickable
+            )
+            val background = when (presetPresentation.visualState) {
+                NotificationPresetVisualState.ACTIVE_ACTIONABLE,
+                NotificationPresetVisualState.ACTIVE_UNAVAILABLE ->
+                    R.drawable.notification_preset_selected
+                NotificationPresetVisualState.ACTIONABLE ->
+                    R.drawable.notification_preset_unselected
+                NotificationPresetVisualState.UNAVAILABLE ->
+                    R.drawable.notification_preset_disabled
+            }
+            setInt(presetCellId(preset), "setBackgroundResource", background)
+            setFloat(presetCellId(preset), "setAlpha", presetPresentation.cellAlpha)
+            setTextViewText(presetLabelId(preset), presetPresentation.label)
+            if (active) {
+                setTextColor(presetLabelId(preset), Color.parseColor("#34E0A1"))
+            }
+            setInt(presetImageId(preset), "setImageAlpha", presetPresentation.imageAlpha)
+            if (presetPresentation.visualState in setOf(
+                    NotificationPresetVisualState.ACTIVE_ACTIONABLE,
+                    NotificationPresetVisualState.ACTIONABLE
+                )
+            ) {
+                setOnClickPendingIntent(presetCellId(preset), presetPendingIntent(ctx, preset))
+            }
+        }
+    }
+
+    private fun presetPendingIntent(ctx: Context, preset: FootwearPreset): PendingIntent {
+        val (action, requestCode) = when (preset) {
+            FootwearPreset.BAREFOOT -> ACTION_PRESET_BAREFOOT to REQUEST_PRESET_BAREFOOT
+            FootwearPreset.RUNNING -> ACTION_PRESET_RUNNING to REQUEST_PRESET_RUNNING
+            FootwearPreset.DRESS -> ACTION_PRESET_DRESS to REQUEST_PRESET_DRESS
+            FootwearPreset.BOOTS -> ACTION_PRESET_BOOTS to REQUEST_PRESET_BOOTS
+        }
+        val intent = Intent(ctx, CheckNowService::class.java).setAction(action)
+        return PendingIntent.getForegroundService(ctx, requestCode, intent, pendingIntentFlags())
+    }
+
+    private fun presetDrawable(preset: FootwearPreset): Int = when (preset) {
+        FootwearPreset.BAREFOOT -> R.drawable.preset_barefoot
+        FootwearPreset.RUNNING -> R.drawable.preset_running
+        FootwearPreset.DRESS -> R.drawable.preset_dress
+        FootwearPreset.BOOTS -> R.drawable.preset_boots
+    }
+
+    private fun presetCellId(preset: FootwearPreset): Int = when (preset) {
+        FootwearPreset.BAREFOOT -> R.id.notification_preset_barefoot
+        FootwearPreset.RUNNING -> R.id.notification_preset_running
+        FootwearPreset.DRESS -> R.id.notification_preset_dress
+        FootwearPreset.BOOTS -> R.id.notification_preset_boots
+    }
+
+    private fun presetImageId(preset: FootwearPreset): Int = when (preset) {
+        FootwearPreset.BAREFOOT -> R.id.notification_preset_barefoot_image
+        FootwearPreset.RUNNING -> R.id.notification_preset_running_image
+        FootwearPreset.DRESS -> R.id.notification_preset_dress_image
+        FootwearPreset.BOOTS -> R.id.notification_preset_boots_image
+    }
+
+    private fun presetLabelId(preset: FootwearPreset): Int = when (preset) {
+        FootwearPreset.BAREFOOT -> R.id.notification_preset_barefoot_label
+        FootwearPreset.RUNNING -> R.id.notification_preset_running_label
+        FootwearPreset.DRESS -> R.id.notification_preset_dress_label
+        FootwearPreset.BOOTS -> R.id.notification_preset_boots_label
     }
 
     private fun openApp(ctx: Context): PendingIntent {
@@ -241,16 +390,17 @@ object Alerts {
         requestCode: Int
     ): NotificationCompat.Action {
         val intent = Intent(ctx, CheckNowService::class.java).setAction(action)
-        val pending = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            PendingIntent.getForegroundService(ctx, requestCode, intent, pendingIntentFlags())
-        } else {
-            PendingIntent.getService(ctx, requestCode, intent, pendingIntentFlags())
-        }
+        val pending = PendingIntent.getForegroundService(
+            ctx,
+            requestCode,
+            intent,
+            pendingIntentFlags()
+        )
         return NotificationCompat.Action(0, label, pending)
     }
 
-    private fun pendingIntentFlags(): Int = PendingIntent.FLAG_UPDATE_CURRENT or
-        (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+    private fun pendingIntentFlags(): Int =
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
 
     @SuppressLint("MissingPermission")
     private fun actionsAreSafe(ctx: Context): Boolean {

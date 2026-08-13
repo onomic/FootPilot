@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="notification_preset_outline">#52000000</color>
+    <color name="notification_preset_disabled_outline">#26000000</color>
+</resources>

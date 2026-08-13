@@ -1,5 +1,46 @@
 # Foot Battery — Project Notes & Handoff
 
+> **Ankle Alignment v1 update:** This addendum supersedes the standby-only command boundary in the
+> older handoff below without rewriting that historical record. The proprietary AA01 allowlist is
+> now standby query/on/off, ankle query, absolute ankle set using signed little-endian `Int32`
+> millidegrees, and Auto start `B2 B0 04 00`. `FootGattSession` remains the sole GATT owner; its one
+> typed AA01 router and transaction mutex serve standby, ankle, and Auto traffic, while the existing
+> process-wide coordinator serializes live, manual, notification, worker, and disconnect work. AA01
+> and AA02 are subscribed before commands. `B2 B0 04 02` remains unknown and is never sent.
+>
+> Ankle truth is persisted separately from the battery/standby snapshot as an exact millidegree
+> value, verification time, and certainty (`UNKNOWN`, `CONFIRMED`, or
+> `UNKNOWN_AFTER_COMMAND`). Every fine, preset, and Auto movement performs a fresh standby query and
+> requires OFF; the app never silently turns standby off. A set-write response is optional after an
+> accepted write, but the final query is authoritative. Possible movement followed by failed
+> verification becomes unknown-after-command, and a cached value may then appear only as labelled
+> `Last verified` history—not as current state. Reconnect queries the foot and never replays local
+> angle or preset state; a process restart treats the persisted angle as historical until a fresh
+> typed query succeeds. The app enforces `-2000..14000` md; invalid `±100` md fine steps are disabled
+> instead of clamped. A final queried result within one millidegree of the request is accepted while
+> preserving the foot's exact value; larger mismatches remain verified truth but report request
+> failure. Unsupported firmware out-of-range behavior is not explored.
+>
+> Barefoot, Running, Dress, and Boots are fixed, initially unconfigured presets. Saving records only
+> the selected preset's current foot-confirmed exact angle; recalling a preset runs the same safe
+> absolute-set transaction. Fine adjustment clears physical active matching when the confirmed
+> value no longer equals a saved target. Auto is event-driven, treats observed `00`/`1E`/`3C`
+> activity values as opaque, requires completion plus a final query for success, and never updates
+> preset storage. The supplied footwear artwork is used in the app and expanded notification.
+>
+> The collapsed notification is status-only. In a normal safe state the expanded notification shows
+> the four presets and exactly Check / Standby / Auto native actions. Custom `RemoteViews` content is
+> transparent inside the SystemUI-owned notification surface and uses notification-aware text
+> appearances in light and dark themes. Taps revalidate current permission, Bluetooth, session,
+> configured-preset, bounds, and fresh standby truth at execution time. Quick Adjust is intentionally
+> hidden until verified calibration is configured: no approved inch-to-angle calibration exists, so
+> no inch movement or guessed conversion is available. The physical-validation build is
+> `1.2.0-beta1` (`versionCode 2`).
+>
+> **Physical validation remains pending.** Software tests cannot establish movement safety. The
+> owner should perform the seated and supported checklist in the “Ankle Alignment v1 hardware
+> validation” section below before relying on movement controls.
+
 > **Standby v1 update:** The historical notes below describe the pre-standby implementation.
 > The current app now routes all live, manual, notification, and scheduled BLE work through
 > one process-wide coordinator and `FootGattSession`. A complete check queries confirmed
@@ -17,9 +58,40 @@
 > operation results until their eight-second expiration.
 
 **Purpose of this document:** complete context for the FootBattery Android app so work can
-continue in a fresh session without losing any decisions or state. Last updated at the point
-where the app is fully working except for one unavoidable Android UI behavior (notification
-shade collapse).
+continue in a fresh session without losing decisions or state. Historical sections remain intact;
+the addenda at the top describe the current implementation.
+
+## Ankle Alignment v1 hardware validation
+
+Perform movement checks only while seated and appropriately supported—never while walking or
+driving. These items are pending until the owner validates them on the real foot:
+
+1. Connect and confirm AA01/AA02 subscriptions finish before controls enable.
+2. Confirm initial battery, standby, and ankle values come from the foot.
+3. Reconnect while standby is active and verify persisted device truth is shown.
+4. Toggle standby ON/OFF and verify UI changes only after device confirmation.
+5. Verify the explicit Disconnect warning while standby is active.
+6. With standby OFF and the foot safely positioned, test one `+0.1°` and one `-0.1°`.
+7. Confirm decrement is disabled at `-2.0°` and increment at `+14.0°`.
+8. Save and recall Barefoot, Running, Dress, and Boots independently.
+9. Fine-adjust away from a saved preset and confirm its active indication clears until re-saved.
+10. Restart/reconnect and verify device truth replaces local cache rather than replaying it.
+11. Verify collapsed and expanded notifications in light and dark system themes, including a preset,
+    Check, and Standby action.
+12. Run Auto from the app and expanded notification; confirm its result updates the angle but never
+    overwrites presets.
+13. Confirm standby ON blocks movement both in-app and from an already-rendered notification.
+14. Confirm background polling cannot collide with live, manual, preset, standby, or Auto work.
+15. Exercise temporary-session preset and Auto paths if the current product flow exposes them, and
+    confirm each final query completes before disconnect/unbond.
+16. Verify the next connection rediscovers the current physical ankle angle.
+17. Verify the exact supplied footwear artwork in the app and expanded notification on the target
+    Samsung/One UI device.
+18. Only if explicitly chosen and safe, interrupt one movement by disconnecting and verify
+    unknown/re-query recovery; otherwise leave this item pending.
+19. Regression-check battery reads, polling, low-battery alert/re-arm behavior, pairing PIN,
+    transient notifications, explicit disconnect, unbond, and the trusted disconnect peep.
+20. Confirm Quick Adjust remains hidden until verified calibration is configured.
 
 ---
 

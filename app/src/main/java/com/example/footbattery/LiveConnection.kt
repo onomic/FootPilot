@@ -45,6 +45,8 @@ object LiveConnection {
     fun start(ctx: Context) {
         val app = ctx.applicationContext
         BatteryRepo.ensureInitialized(app)
+        AnkleRepo.ensureInitialized(app)
+        PresetRepository.ensureInitialized(app)
         if (wantConnected) return
 
         appContext = app

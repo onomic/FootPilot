@@ -1,12 +1,33 @@
 package com.example.footbattery
 
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StandbyTransactionTest {
+    @Test fun notificationToggleDerivesTargetFromFreshFootState() = runBlocking {
+        val transport = FakeTransport(
+            exchangeSteps = listOf(
+                notifications(query(StandbyState.ON)),
+                notifications(set(StandbyState.OFF)),
+                notifications(query(StandbyState.OFF))
+            ),
+            battery = StandbyBatteryReadResult.Success(83)
+        )
+
+        val result = StandbyTransaction.executeToggle(transport)
+
+        assertTrue(result.verified)
+        assertEquals(StandbyState.OFF, result.requested)
+        assertEquals(StandbyState.OFF, result.finalState)
+        assertArrayEquals(StandbyProtocol.queryCommand(), transport.commands[0])
+        assertArrayEquals(StandbyProtocol.setCommand(StandbyState.OFF), transport.commands[1])
+        assertArrayEquals(StandbyProtocol.queryCommand(), transport.commands[2])
+    }
+
     @Test fun initialQueryAlreadyRequestedSkipsSetAndFinalQuery() = runBlocking {
         val transport = FakeTransport(
             exchangeSteps = listOf(notifications(query(StandbyState.ON))),
@@ -223,6 +244,7 @@ class StandbyTransactionTest {
             StandbyBatteryReadResult.Failed("Battery should not be read")
     ) : StandbyTransactionTransport {
         private val steps = ArrayDeque(exchangeSteps)
+        val commands = mutableListOf<ByteArray>()
         val expectedKinds = mutableListOf<StandbyResponseKind>()
         val selectedResponses = mutableListOf<StandbyResponse>()
         var batteryReads = 0
@@ -232,6 +254,7 @@ class StandbyTransactionTest {
             expectedKind: StandbyResponseKind,
             expectedState: StandbyState?
         ): StandbyCommandExchangeResult {
+            commands += command.copyOf()
             expectedKinds += expectedKind
             return when (val step = steps.removeFirst()) {
                 is ExchangeStep.Result -> step.value
