@@ -82,14 +82,17 @@ replay cached angles or presets. After a process restart, a persisted angle is l
 until a fresh typed query confirms it. A final foot-confirmed value within one millidegree of the request is
 accepted as the device result; the exact queried value—not the request—is what is stored and shown.
 
-The approved inch-based Quick Adjust controls remain visibly disabled because no validated
-shoe-height-to-angle calibration was supplied. No inch conversion is guessed, and notification
-controls expose no inch adjustment.
+Quick Adjust is intentionally hidden until verified shoe-height-to-angle calibration is
+configured. No inch conversion is guessed, and notification controls expose no inch adjustment.
 
 The collapsed notification is status-only. In a normal safe state, the expanded notification shows
 the four fixed presets and native actions in the order **Check / Standby / Auto**. Actions are
 revalidated when tapped, so an old rendered notification cannot bypass current standby or connection
-state.
+state. Custom notification content is transparent inside Android's native notification surface and
+uses notification-aware text appearances for readability in light and dark system themes.
+
+The physical-validation build identifies itself as `1.2.0-beta1` (`versionCode 2`); the version is
+shown unobtrusively at the bottom of Settings.
 
 ## Make background alerts reliable
 

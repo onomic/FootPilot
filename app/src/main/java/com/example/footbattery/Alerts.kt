@@ -221,7 +221,8 @@ object Alerts {
             statusText = statusText
         )
         val collapsed = RemoteViews(ctx.packageName, R.layout.notification_state_collapsed).apply {
-            setTextViewText(R.id.notification_collapsed_battery, content.title)
+            setTextViewText(R.id.notification_collapsed_battery_label, content.batteryLabel)
+            setTextViewText(R.id.notification_collapsed_battery_value, content.batteryValue)
             setTextViewText(R.id.notification_collapsed_status, content.collapsedText)
         }
         val autoVisible = ankle.operation in setOf(
@@ -232,7 +233,8 @@ object Alerts {
             statusText?.startsWith("Keep foot flat") == true
         val expanded = if (autoVisible) {
             RemoteViews(ctx.packageName, R.layout.notification_auto).apply {
-                setTextViewText(R.id.notification_auto_battery, content.title)
+                setTextViewText(R.id.notification_auto_battery_label, content.batteryLabel)
+                setTextViewText(R.id.notification_auto_battery_value, content.batteryValue)
                 setTextViewText(R.id.notification_auto_title, "Automatic alignment")
                 setTextViewText(
                     R.id.notification_auto_instruction,
@@ -278,15 +280,22 @@ object Alerts {
         presets: PresetState,
         includeActions: Boolean
     ): RemoteViews = RemoteViews(ctx.packageName, R.layout.notification_state_expanded).apply {
-        setTextViewText(R.id.notification_expanded_battery, content.title)
+        setTextViewText(R.id.notification_expanded_battery_label, content.batteryLabel)
+        setTextViewText(R.id.notification_expanded_battery_value, content.batteryValue)
         setTextViewText(R.id.notification_expanded_standby, content.standbyText)
-        setTextViewText(R.id.notification_angle_text, content.angleSummaryText)
+        setTextViewText(R.id.notification_angle_text, content.angleStatusText)
+        if (content.angleStatusConfirmed) {
+            setTextColor(R.id.notification_angle_text, Color.parseColor("#34E0A1"))
+        }
         val summary = content.summaryPreset
         if (summary == null) {
             setViewVisibility(R.id.notification_summary_image, View.GONE)
+            setViewVisibility(R.id.notification_summary_name, View.GONE)
         } else {
             setViewVisibility(R.id.notification_summary_image, View.VISIBLE)
+            setViewVisibility(R.id.notification_summary_name, View.VISIBLE)
             setImageViewResource(R.id.notification_summary_image, presetDrawable(summary))
+            setTextViewText(R.id.notification_summary_name, content.summaryPresetName)
         }
         val operation = content.operationText
         setViewVisibility(
@@ -297,25 +306,34 @@ object Alerts {
 
         val clickable = notificationPresetActions(display, ankle, presets, includeActions)
         FootwearPreset.fixedOrder.forEach { preset ->
-            val configured = presets.targets.target(preset) != null
             val active = display.standby == StandbyState.OFF && ankle.confirmedMd != null &&
                 presets.targets.target(preset) == ankle.confirmedMd
-            val background = when {
-                active -> R.drawable.notification_preset_selected
-                configured -> R.drawable.notification_preset_unselected
-                else -> R.drawable.notification_preset_disabled
+            val presetPresentation = notificationPresetPresentation(
+                preset = preset,
+                physicallyActive = active,
+                actionable = preset in clickable
+            )
+            val background = when (presetPresentation.visualState) {
+                NotificationPresetVisualState.ACTIVE_ACTIONABLE,
+                NotificationPresetVisualState.ACTIVE_UNAVAILABLE ->
+                    R.drawable.notification_preset_selected
+                NotificationPresetVisualState.ACTIONABLE ->
+                    R.drawable.notification_preset_unselected
+                NotificationPresetVisualState.UNAVAILABLE ->
+                    R.drawable.notification_preset_disabled
             }
             setInt(presetCellId(preset), "setBackgroundResource", background)
-            setTextViewText(
-                presetLabelId(preset),
-                if (active) "${preset.displayName} ✓" else preset.displayName
-            )
-            setTextColor(
-                presetLabelId(preset),
-                Color.parseColor(if (active) "#34E0A1" else if (configured) "#F1F5F4" else "#7C8D89")
-            )
-            setInt(presetImageId(preset), "setImageAlpha", if (configured) 255 else 92)
-            if (preset in clickable) {
+            setFloat(presetCellId(preset), "setAlpha", presetPresentation.cellAlpha)
+            setTextViewText(presetLabelId(preset), presetPresentation.label)
+            if (active) {
+                setTextColor(presetLabelId(preset), Color.parseColor("#34E0A1"))
+            }
+            setInt(presetImageId(preset), "setImageAlpha", presetPresentation.imageAlpha)
+            if (presetPresentation.visualState in setOf(
+                    NotificationPresetVisualState.ACTIVE_ACTIONABLE,
+                    NotificationPresetVisualState.ACTIONABLE
+                )
+            ) {
                 setOnClickPendingIntent(presetCellId(preset), presetPendingIntent(ctx, preset))
             }
         }

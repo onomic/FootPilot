@@ -29,10 +29,13 @@
 > preset storage. The supplied footwear artwork is used in the app and expanded notification.
 >
 > The collapsed notification is status-only. In a normal safe state the expanded notification shows
-> the four presets and exactly Check / Standby / Auto native actions. Taps revalidate current
-> permission, Bluetooth, session, configured-preset, bounds, and fresh standby truth at execution
-> time. Quick Adjust is app-only and visibly disabled as `Calibration required`: no approved
-> inch-to-angle calibration exists, so no inch movement or guessed conversion is available.
+> the four presets and exactly Check / Standby / Auto native actions. Custom `RemoteViews` content is
+> transparent inside the SystemUI-owned notification surface and uses notification-aware text
+> appearances in light and dark themes. Taps revalidate current permission, Bluetooth, session,
+> configured-preset, bounds, and fresh standby truth at execution time. Quick Adjust is intentionally
+> hidden until verified calibration is configured: no approved inch-to-angle calibration exists, so
+> no inch movement or guessed conversion is available. The physical-validation build is
+> `1.2.0-beta1` (`versionCode 2`).
 >
 > **Physical validation remains pending.** Software tests cannot establish movement safety. The
 > owner should perform the seated and supported checklist in the “Ankle Alignment v1 hardware
@@ -73,7 +76,8 @@ driving. These items are pending until the owner validates them on the real foot
 8. Save and recall Barefoot, Running, Dress, and Boots independently.
 9. Fine-adjust away from a saved preset and confirm its active indication clears until re-saved.
 10. Restart/reconnect and verify device truth replaces local cache rather than replaying it.
-11. Verify collapsed and expanded notifications, including a preset, Check, and Standby action.
+11. Verify collapsed and expanded notifications in light and dark system themes, including a preset,
+    Check, and Standby action.
 12. Run Auto from the app and expanded notification; confirm its result updates the angle but never
     overwrites presets.
 13. Confirm standby ON blocks movement both in-app and from an already-rendered notification.
@@ -87,6 +91,7 @@ driving. These items are pending until the owner validates them on the real foot
     unknown/re-query recovery; otherwise leave this item pending.
 19. Regression-check battery reads, polling, low-battery alert/re-arm behavior, pairing PIN,
     transient notifications, explicit disconnect, unbond, and the trusted disconnect peep.
+20. Confirm Quick Adjust remains hidden until verified calibration is configured.
 
 ---
 

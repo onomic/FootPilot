@@ -208,8 +208,21 @@ class NotificationStateTest {
         )
 
         assertEquals("Battery 93%", content.title)
+        assertEquals("Battery", content.batteryLabel)
+        assertEquals("93%", content.batteryValue)
         assertEquals("Standby off · Running shoes · +1.8°", content.collapsedText)
-        assertEquals("Running shoes · Confirmed +1.8° ✓", content.angleSummaryText)
+        assertEquals("Running shoes · Confirmed +1.8°", content.angleSummaryText)
+        assertEquals("Running shoes", content.summaryPresetName)
+        assertEquals("Confirmed +1.8°", content.angleStatusText)
+        assertTrue(content.angleStatusConfirmed)
+        assertFalse(
+            listOf(
+                content.collapsedText,
+                content.angleSummaryText,
+                content.summaryPresetName,
+                content.angleStatusText
+            ).filterNotNull().any { "✓" in it }
+        )
     }
 
     @Test fun collapsedKnownStateWithoutMatchNeverInventsCustom() {
@@ -321,6 +334,26 @@ class NotificationStateTest {
                 includeActions = true
             )
         )
+    }
+
+    @Test fun activePresetLabelHasNoCheckmarkAndUnavailableStateIsMuted() {
+        val active = notificationPresetPresentation(
+            preset = FootwearPreset.RUNNING,
+            physicallyActive = true,
+            actionable = true
+        )
+        val blocked = notificationPresetPresentation(
+            preset = FootwearPreset.RUNNING,
+            physicallyActive = true,
+            actionable = false
+        )
+
+        assertEquals("Running", active.label)
+        assertFalse(active.label.contains("✓"))
+        assertEquals(NotificationPresetVisualState.ACTIVE_ACTIONABLE, active.visualState)
+        assertEquals(NotificationPresetVisualState.ACTIVE_UNAVAILABLE, blocked.visualState)
+        assertTrue(blocked.cellAlpha < active.cellAlpha)
+        assertTrue(blocked.imageAlpha < active.imageAlpha)
     }
 
     private fun confirmedAnkle(md: Int = 1800) = AnkleState(

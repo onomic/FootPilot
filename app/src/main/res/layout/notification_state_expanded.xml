@@ -3,30 +3,50 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@drawable/notification_panel"
+    android:background="@android:color/transparent"
     android:orientation="vertical"
-    android:paddingStart="12dp"
+    android:paddingStart="8dp"
     android:paddingTop="4dp"
-    android:paddingEnd="12dp"
+    android:paddingEnd="8dp"
     android:paddingBottom="8dp">
 
-    <TextView
-        android:id="@+id/notification_expanded_battery"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:ellipsize="end"
-        android:maxLines="1"
-        android:textColor="#F1F5F4"
-        android:textSize="25sp"
-        android:textStyle="bold"
-        tools:text="Battery 93%" />
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/notification_expanded_battery_label"
+            style="@style/TextAppearance.Compat.Notification.Title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            tools:text="Battery" />
+
+        <TextView
+            android:id="@+id/notification_expanded_battery_value"
+            style="@style/TextAppearance.Compat.Notification.Title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="5dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="#34E0A1"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            tools:text="93%" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/notification_expanded_standby"
+        style="@style/TextAppearance.Compat.Notification"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="1dp"
-        android:textColor="#D7DEDC"
         android:textSize="15sp"
         tools:text="Standby off" />
 
@@ -42,24 +62,41 @@
             android:id="@+id/notification_summary_image"
             android:layout_width="42dp"
             android:layout_height="32dp"
+            android:layout_marginEnd="6dp"
             android:contentDescription="@string/ankle_preset_artwork"
             android:scaleType="centerCrop" />
 
-        <TextView
-            android:id="@+id/notification_angle_text"
+        <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
             android:layout_weight="1"
-            android:ellipsize="end"
-            android:maxLines="2"
-            android:textColor="#34E0A1"
-            android:textSize="14sp"
-            tools:text="Running shoes · Confirmed +1.8° ✓" />
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/notification_summary_name"
+                style="@style/TextAppearance.Compat.Notification.Title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textSize="14sp"
+                tools:text="Running shoes" />
+
+            <TextView
+                android:id="@+id/notification_angle_text"
+                style="@style/TextAppearance.Compat.Notification"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:textSize="14sp"
+                tools:text="Confirmed +1.8°" />
+        </LinearLayout>
     </LinearLayout>
 
     <TextView
         android:id="@+id/notification_operation_status"
+        style="@style/TextAppearance.Compat.Notification"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="3dp"
@@ -100,12 +137,12 @@
 
             <TextView
                 android:id="@+id/notification_preset_barefoot_label"
+                style="@style/TextAppearance.Compat.Notification"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center"
                 android:maxLines="1"
                 android:text="@string/preset_barefoot"
-                android:textColor="#7C8D89"
                 android:textSize="11sp" />
         </LinearLayout>
 
@@ -131,12 +168,12 @@
 
             <TextView
                 android:id="@+id/notification_preset_running_label"
+                style="@style/TextAppearance.Compat.Notification"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center"
                 android:maxLines="1"
                 android:text="@string/preset_running"
-                android:textColor="#7C8D89"
                 android:textSize="11sp" />
         </LinearLayout>
 
@@ -162,12 +199,12 @@
 
             <TextView
                 android:id="@+id/notification_preset_dress_label"
+                style="@style/TextAppearance.Compat.Notification"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center"
                 android:maxLines="1"
                 android:text="@string/preset_dress"
-                android:textColor="#7C8D89"
                 android:textSize="11sp" />
         </LinearLayout>
 
@@ -192,12 +229,12 @@
 
             <TextView
                 android:id="@+id/notification_preset_boots_label"
+                style="@style/TextAppearance.Compat.Notification"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center"
                 android:maxLines="1"
                 android:text="@string/preset_boots"
-                android:textColor="#7C8D89"
                 android:textSize="11sp" />
         </LinearLayout>
     </LinearLayout>

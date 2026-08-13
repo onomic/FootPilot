@@ -58,10 +58,15 @@ data class StateNotificationModel(
 
 data class StateNotificationContent(
     val title: String,
+    val batteryLabel: String,
+    val batteryValue: String,
     val collapsedText: String,
     val standbyText: String,
     val angleSummaryText: String,
     val summaryPreset: FootwearPreset?,
+    val summaryPresetName: String?,
+    val angleStatusText: String,
+    val angleStatusConfirmed: Boolean,
     val operationText: String?,
     val expandedLines: List<String>
 )
@@ -93,10 +98,8 @@ object StateNotificationContentPresentation {
         val resolvedStatus = statusText?.trim()?.takeIf { it.isNotEmpty() }
         val confirmedMd = ankle.confirmedMd.takeIf { display.standby == StandbyState.OFF }
         val matchedPreset = summaryPreset(presets, confirmedMd)
-        val angleSummary = when {
-            confirmedMd != null && matchedPreset != null ->
-                "${matchedPreset.summaryName} · Confirmed ${AnkleProtocol.format(confirmedMd)} ✓"
-            confirmedMd != null -> "Confirmed ${AnkleProtocol.format(confirmedMd)} ✓"
+        val angleStatus = when {
+            confirmedMd != null -> "Confirmed ${AnkleProtocol.format(confirmedMd)}"
             ankle.certainty == AnkleCertainty.UNKNOWN_AFTER_COMMAND ->
                 ankle.lastVerifiedMd?.let { "Unknown · Last verified ${AnkleProtocol.format(it)}" }
                     ?: "Ankle angle unknown"
@@ -106,6 +109,8 @@ object StateNotificationContentPresentation {
                 "Last verified ${AnkleProtocol.format(requireNotNull(ankle.confirmedMd))}"
             else -> "Ankle angle unknown"
         }
+        val angleSummary = listOfNotNull(matchedPreset?.summaryName, angleStatus)
+            .joinToString(" · ")
         val expandedLines = buildList {
             add(display.standbyLine)
             add(angleSummary)
@@ -130,10 +135,15 @@ object StateNotificationContentPresentation {
 
         return StateNotificationContent(
             title = display.batteryLine,
+            batteryLabel = "Battery",
+            batteryValue = display.batteryLevel?.let { "$it%" } ?: "—",
             collapsedText = collapsedText,
             standbyText = display.standbyLine,
             angleSummaryText = angleSummary,
             summaryPreset = matchedPreset,
+            summaryPresetName = matchedPreset?.summaryName,
+            angleStatusText = angleStatus,
+            angleStatusConfirmed = confirmedMd != null,
             operationText = resolvedStatus,
             expandedLines = expandedLines
         )
@@ -182,6 +192,50 @@ fun notificationPresetActions(
     return FootwearPreset.fixedOrder.filterTo(linkedSetOf()) {
         presets.targets.target(it) != null
     }
+}
+
+enum class NotificationPresetVisualState {
+    ACTIVE_ACTIONABLE,
+    ACTIONABLE,
+    ACTIVE_UNAVAILABLE,
+    UNAVAILABLE
+}
+
+data class NotificationPresetPresentation(
+    val label: String,
+    val visualState: NotificationPresetVisualState,
+    val cellAlpha: Float,
+    val imageAlpha: Int
+)
+
+/** Keeps movement safety and visual affordance aligned without decorating labels with symbols. */
+fun notificationPresetPresentation(
+    preset: FootwearPreset,
+    physicallyActive: Boolean,
+    actionable: Boolean
+): NotificationPresetPresentation {
+    val visualState = when {
+        physicallyActive && actionable -> NotificationPresetVisualState.ACTIVE_ACTIONABLE
+        actionable -> NotificationPresetVisualState.ACTIONABLE
+        physicallyActive -> NotificationPresetVisualState.ACTIVE_UNAVAILABLE
+        else -> NotificationPresetVisualState.UNAVAILABLE
+    }
+    return NotificationPresetPresentation(
+        label = preset.displayName,
+        visualState = visualState,
+        cellAlpha = when (visualState) {
+            NotificationPresetVisualState.ACTIVE_ACTIONABLE,
+            NotificationPresetVisualState.ACTIONABLE -> 1f
+            NotificationPresetVisualState.ACTIVE_UNAVAILABLE -> 0.58f
+            NotificationPresetVisualState.UNAVAILABLE -> 0.45f
+        },
+        imageAlpha = when (visualState) {
+            NotificationPresetVisualState.ACTIVE_ACTIONABLE,
+            NotificationPresetVisualState.ACTIONABLE -> 255
+            NotificationPresetVisualState.ACTIVE_UNAVAILABLE -> 148
+            NotificationPresetVisualState.UNAVAILABLE -> 92
+        }
+    )
 }
 
 data class LiveBatteryRefreshPlan(

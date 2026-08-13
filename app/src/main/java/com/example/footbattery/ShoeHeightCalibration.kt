@@ -33,3 +33,5 @@ object UnconfiguredShoeHeightCalibration : ShoeHeightCalibration {
     override val configured: Boolean = false
     override fun targetFor(currentConfirmedMd: Int, change: ShoeHeightChange): Int? = null
 }
+
+fun quickAdjustVisible(calibration: ShoeHeightCalibration): Boolean = calibration.configured

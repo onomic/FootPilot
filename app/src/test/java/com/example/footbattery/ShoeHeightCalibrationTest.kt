@@ -7,6 +7,7 @@ import org.junit.Test
 class ShoeHeightCalibrationTest {
     @Test fun missingCalibrationReturnsNoAbsoluteTargetForEveryApprovedHeight() {
         assertFalse(UnconfiguredShoeHeightCalibration.configured)
+        assertFalse(quickAdjustVisible(UnconfiguredShoeHeightCalibration))
         ShoeHeightChange.APPROVED_V1.forEach { change ->
             assertNull(UnconfiguredShoeHeightCalibration.targetFor(4499, change))
         }

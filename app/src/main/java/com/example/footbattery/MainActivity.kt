@@ -46,6 +46,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -773,7 +774,8 @@ private fun AnkleAlignmentCard(
     onFineAdjust: (FineAdjustment) -> Unit,
     onPreset: (FootwearPreset) -> Unit,
     onSavePreset: () -> Unit,
-    onAutoAlign: () -> Unit
+    onAutoAlign: () -> Unit,
+    calibration: ShoeHeightCalibration = UnconfiguredShoeHeightCalibration
 ) {
     val autoRunning = state.operation in setOf(
         AnkleOperation.AUTO_STARTING,
@@ -868,15 +870,6 @@ private fun AnkleAlignmentCard(
                     Text(it, color = Muted, fontSize = 11.sp, maxLines = 2)
                 }
             }
-            if (presentation.isCurrentConfirmed) {
-                Text(
-                    "✓",
-                    color = Accent,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.semantics { contentDescription = "Device confirmed" }
-                )
-            }
         }
 
         Spacer(Modifier.height(6.dp))
@@ -900,49 +893,44 @@ private fun AnkleAlignmentCard(
             }
         }
 
-        Spacer(Modifier.height(12.dp))
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
-        Spacer(Modifier.height(10.dp))
-        Text(
-            "QUICK ADJUST",
-            color = Muted,
-            fontSize = 10.sp,
-            fontFamily = FontFamily.Monospace
-        )
-        Spacer(Modifier.height(6.dp))
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            ShoeHeightChange.APPROVED_V1.forEach { change ->
-                OutlinedButton(
-                    onClick = {},
-                    enabled = false,
-                    modifier = Modifier.weight(1f).heightIn(min = 42.dp).semantics {
-                        contentDescription = "${change.label}, unavailable. Calibration required"
-                    },
-                    border = BorderStroke(1.dp, Line),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        disabledContentColor = Muted.copy(alpha = 0.65f)
-                    ),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                        horizontal = 4.dp,
-                        vertical = 4.dp
-                    )
-                ) {
-                    Text(change.label, fontSize = 11.sp, maxLines = 1)
+        if (quickAdjustVisible(calibration)) {
+            Spacer(Modifier.height(12.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "QUICK ADJUST",
+                color = Muted,
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                ShoeHeightChange.APPROVED_V1.forEach { change ->
+                    OutlinedButton(
+                        onClick = {},
+                        enabled = false,
+                        modifier = Modifier.weight(1f).heightIn(min = 42.dp).semantics {
+                            contentDescription = "${change.label}, unavailable"
+                        },
+                        border = BorderStroke(1.dp, Line),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            disabledContentColor = Muted.copy(alpha = 0.65f)
+                        ),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            horizontal = 4.dp,
+                            vertical = 4.dp
+                        )
+                    ) {
+                        Text(change.label, fontSize = 11.sp, maxLines = 1)
+                    }
                 }
             }
         }
-        Text(
-            "Calibration required",
-            color = Muted,
-            fontSize = 10.sp,
-            modifier = Modifier.fillMaxWidth().padding(top = 3.dp),
-            textAlign = TextAlign.End
-        )
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(12.dp))
         Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
         Spacer(Modifier.height(10.dp))
         Text(
@@ -998,7 +986,11 @@ private fun AnkleAlignmentCard(
                 }
             }
         ) {
-            Text("▯", fontSize = 22.sp)
+            Icon(
+                painter = painterResource(R.drawable.ic_bookmark_outline),
+                contentDescription = null,
+                modifier = Modifier.size(20.dp)
+            )
             Spacer(Modifier.width(8.dp))
             Text("Save preset", fontWeight = FontWeight.Bold)
         }
@@ -1073,10 +1065,16 @@ private fun PresetCell(
             .clickable(enabled = enabled, onClick = onClick)
             .semantics {
                 contentDescription = description
-                this.selected = selectedForSave
+                this.selected = selectedForSave || physicallyActive
             }
             .padding(horizontal = 3.dp, vertical = 5.dp)
-            .alpha(if (configured) 1f else 0.55f),
+            .alpha(
+                when {
+                    !enabled -> 0.45f
+                    configured -> 1f
+                    else -> 0.55f
+                }
+            ),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -1087,7 +1085,7 @@ private fun PresetCell(
             modifier = Modifier.fillMaxWidth().height(40.dp)
         )
         Text(
-            if (physicallyActive) "${preset.displayName} ✓" else preset.displayName,
+            preset.displayName,
             color = if (physicallyActive) Accent else Ink,
             fontSize = 10.sp,
             fontWeight = if (selectedForSave || physicallyActive) FontWeight.Bold else FontWeight.Normal,
@@ -1335,7 +1333,15 @@ private fun SettingsScreen(
                 "Tip: for reliable background alerts, set this app's battery usage to Unrestricted in Android settings.",
                 color = Muted, fontSize = 12.sp
             )
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(20.dp))
+            Text(
+                "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                color = Muted.copy(alpha = 0.72f),
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(16.dp))
         }
     }
 }

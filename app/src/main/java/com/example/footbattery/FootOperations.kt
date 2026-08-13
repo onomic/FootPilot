@@ -522,7 +522,7 @@ object FootOperations {
         val confirmed = read.finalConfirmedMd
         if (read.finalTruthConfirmed && confirmed != null) {
             val message = if (read.completionObserved) {
-                "Aligned · ${AnkleProtocol.format(confirmed)} ✓"
+                "Aligned · ${AnkleProtocol.format(confirmed)}"
             } else {
                 read.error ?: "Automatic alignment completion was not confirmed"
             }
