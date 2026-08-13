@@ -5,6 +5,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.yield
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Test
 
@@ -56,5 +57,63 @@ class OperationCoordinatorTest {
 
         val completed = standby.await() as CoordinatedResult.Completed
         assertEquals("standby", completed.value)
+    }
+
+    @Test fun everyDeviceControlKindUsesTheSamePriorityReservation() = runBlocking {
+        val coordinator = OperationCoordinator()
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val auto = async {
+            coordinator.runDeviceControl(BleOperationKind.AUTO_ALIGN) {
+                entered.complete(Unit)
+                release.await()
+            }
+        }
+        entered.await()
+
+        assertSame(
+            CoordinatedResult.Busy,
+            coordinator.runDeviceControl(BleOperationKind.PRESET_APPLY) { Unit }
+        )
+        assertSame(
+            CoordinatedResult.Busy,
+            coordinator.tryRun(BleOperationKind.SCHEDULED_CHECK) { Unit }
+        )
+        assertSame(
+            CoordinatedResult.Busy,
+            coordinator.tryRun(BleOperationKind.MANUAL_CHECK) { Unit }
+        )
+
+        release.complete(Unit)
+        auto.await()
+        Unit
+    }
+
+    @Test fun fineAdjustmentBlocksCheckWhileDisconnectWaitsForSafeRelease() = runBlocking {
+        val coordinator = OperationCoordinator()
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val fine = async {
+            coordinator.runDeviceControl(BleOperationKind.ANKLE_ADJUST) {
+                entered.complete(Unit)
+                release.await()
+                "fine"
+            }
+        }
+        entered.await()
+
+        assertSame(
+            CoordinatedResult.Busy,
+            coordinator.tryRun(BleOperationKind.NOTIFICATION_CHECK) { "unexpected" }
+        )
+        val disconnect = async {
+            coordinator.runQueued(BleOperationKind.DISCONNECT) { "disconnect" }
+        }
+        yield()
+        assertFalse(disconnect.isCompleted)
+
+        release.complete(Unit)
+        assertEquals("fine", (fine.await() as CoordinatedResult.Completed).value)
+        assertEquals("disconnect", (disconnect.await() as CoordinatedResult.Completed).value)
     }
 }

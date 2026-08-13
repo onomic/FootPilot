@@ -231,4 +231,20 @@ class SnapshotReducerTest {
         assertEquals(previous, result.snapshot)
         assertFalse(result.standbyChangeConfirmed)
     }
+
+    @Test fun freshPreflightObservationReplacesDisprovedStandbyWithoutAdvancingTime() {
+        val updated = snapshotAfterStandbyObservation(previous, StandbyState.ON)
+
+        assertEquals(70, updated.batteryLevel)
+        assertEquals(StandbyState.ON, updated.standby)
+        assertEquals(100L, updated.lastChecked)
+        assertEquals(
+            SnapshotCompleteness.STANDBY_CONFIRMED_BATTERY_PENDING,
+            updated.completeness
+        )
+    }
+
+    @Test fun matchingPreflightObservationLeavesCompleteSnapshotUntouched() {
+        assertEquals(previous, snapshotAfterStandbyObservation(previous, StandbyState.OFF))
+    }
 }

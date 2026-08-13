@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/notification_panel"
+    android:orientation="vertical"
+    android:paddingStart="12dp"
+    android:paddingTop="5dp"
+    android:paddingEnd="12dp"
+    android:paddingBottom="10dp">
+
+    <TextView
+        android:id="@+id/notification_auto_battery"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#F1F5F4"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        tools:text="Battery 93%" />
+
+    <TextView
+        android:id="@+id/notification_auto_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="5dp"
+        android:text="@string/automatic_alignment"
+        android:textColor="#34E0A1"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/notification_auto_instruction"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:maxLines="3"
+        android:text="@string/automatic_alignment_instruction"
+        android:textColor="#D7DEDC"
+        android:textSize="13sp" />
+</LinearLayout>

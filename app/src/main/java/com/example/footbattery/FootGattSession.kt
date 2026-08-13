@@ -29,8 +29,10 @@ class BleSessionException(message: String, cause: Throwable? = null) : Exception
 data class FullSnapshotRead(
     val batteryLevel: Int?,
     val standby: StandbyState?,
+    val ankleMd: Int?,
     val batteryError: String? = null,
-    val standbyError: String? = null
+    val standbyError: String? = null,
+    val ankleError: String? = null
 )
 
 /**
@@ -68,7 +70,7 @@ class FootGattSession(
     private var pending: PendingOperation? = null
     private val connected = CompletableDeferred<Unit>()
     private val servicesDiscovered = CompletableDeferred<Unit>()
-    private val aa01Notifications = Channel<ByteArray>(Channel.UNLIMITED)
+    private val aa01Events = Channel<Aa01Event>(Channel.UNLIMITED)
     private val closing = AtomicBoolean(false)
     private val poisoned = AtomicBoolean(false)
     private val disconnectReported = AtomicBoolean(false)
@@ -142,6 +144,20 @@ class FootGattSession(
             standbyError = e.userMessage("Standby check failed")
         }
 
+        var ankleMd: Int? = null
+        var ankleError: String? = null
+        try {
+            val response = requireAnkleResponse(
+                exchangeAnkle(AnkleProtocol.queryCommand(), AnkleResponseKind.QUERY)
+            )
+            ankleMd = response.millidegrees.takeIf(AnkleProtocol::isSupported)
+                ?: throw BleSessionException("Foot reported an unsupported ankle angle")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ankleError = e.userMessage("Ankle check failed")
+        }
+
         var battery: Int? = null
         var batteryError: String? = null
         try {
@@ -151,7 +167,7 @@ class FootGattSession(
         } catch (e: Exception) {
             batteryError = e.userMessage("Battery check failed")
         }
-        FullSnapshotRead(battery, standby, batteryError, standbyError)
+        FullSnapshotRead(battery, standby, ankleMd, batteryError, standbyError, ankleError)
     }
 
     /** Live-only subscription, performed after the required initial full snapshot operation. */
@@ -170,29 +186,60 @@ class FootGattSession(
         transactionMutex.withLock {
             require(requested != StandbyState.UNKNOWN)
             ensureUsable()
-            StandbyTransaction.execute(
-                requested,
-                object : StandbyTransactionTransport {
-                    override suspend fun exchange(
-                        command: ByteArray,
-                        expectedKind: StandbyResponseKind,
-                        expectedState: StandbyState?
-                    ): StandbyCommandExchangeResult = exchangeStandby(
-                        command,
-                        expectedKind,
-                        expectedState
-                    )
+            StandbyTransaction.execute(requested, standbyTransport())
+        }
 
-                    override suspend fun readBattery(): StandbyBatteryReadResult = try {
-                        StandbyBatteryReadResult.Success(readBatteryInternal())
+    /** Notification action derives the opposite target from a fresh response on this session. */
+    suspend fun toggleStandby(): StandbyTransactionRead = transactionMutex.withLock {
+        ensureUsable()
+        StandbyTransaction.executeToggle(standbyTransport())
+    }
+
+    suspend fun changeAnkle(
+        request: AnkleTargetRequest,
+        onPotentialMovement: () -> Unit = {}
+    ): AnkleTransactionRead = transactionMutex.withLock {
+        ensureUsable()
+        AnkleTransaction.execute(request, ankleTransport(), onPotentialMovement)
+    }
+
+    suspend fun autoAlign(
+        onOperation: (AnkleOperation) -> Unit = {},
+        onPotentialMovement: () -> Unit = {}
+    ): AutoAlignmentRead = transactionMutex.withLock {
+        ensureUsable()
+        AutoAlignmentTransaction.execute(
+            transport = object : AutoAlignmentTransport {
+                override suspend fun exchangeStandbyQuery(): StandbyCommandExchangeResult =
+                    exchangeStandby(StandbyProtocol.queryCommand(), StandbyResponseKind.QUERY)
+
+                override suspend fun exchangeAnkleQuery(): AnkleCommandExchangeResult =
+                    exchangeAnkle(AnkleProtocol.queryCommand(), AnkleResponseKind.QUERY)
+
+                override suspend fun writeStart(
+                    onWriteAccepted: () -> Unit
+                ): AutoStartWriteResult {
+                    discardQueuedAa01Events()
+                    return try {
+                        writeAa01(
+                            AutoAlignmentProtocol.startCommand(),
+                            onWriteStarted = onWriteAccepted
+                        )
+                        AutoStartWriteResult.Accepted
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        StandbyBatteryReadResult.Failed(e.userMessage("Battery check failed"))
+                        AutoStartWriteResult.Failed(e.userMessage("Bluetooth command write failed"))
                     }
                 }
-            )
-        }
+
+                override suspend fun awaitRelevantEvent(timeoutMs: Long): AutoEventWaitResult =
+                    awaitAutoEvent(timeoutMs)
+            },
+            onOperation = onOperation,
+            onPotentialMovement = onPotentialMovement
+        )
+    }
 
     @SuppressLint("MissingPermission")
     fun requestDisconnect() {
@@ -205,7 +252,7 @@ class FootGattSession(
         initialized = false
         batteryNotificationsEnabled = false
         failPending(BleSessionException("Bluetooth session closed"))
-        aa01Notifications.close()
+        aa01Events.close()
         val client = gatt
         gatt = null
         if (client != null) {
@@ -258,10 +305,20 @@ class FootGattSession(
     }
 
     @SuppressLint("MissingPermission")
-    private suspend fun writeAa01(value: ByteArray) {
+    private suspend fun writeAa01(
+        value: ByteArray,
+        onWriteStarted: () -> Unit = {}
+    ) {
+        if (!Aa01WriteAllowlist.isAllowed(value)) {
+            throw BleSessionException("Proprietary command is not allowlisted")
+        }
         val client = requireGatt()
         val characteristic = aa01Characteristic ?: throw BleSessionException("AA01 is unavailable")
-        runGattOperation(OperationType.CHARACTERISTIC_WRITE, Uuids.AA01) {
+        runGattOperation(
+            type = OperationType.CHARACTERISTIC_WRITE,
+            characteristicUuid = Uuids.AA01,
+            onStarted = onWriteStarted
+        ) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 client.writeCharacteristic(
                     characteristic,
@@ -292,14 +349,55 @@ class FootGattSession(
         return value
     }
 
+    private fun standbyTransport(): StandbyTransactionTransport =
+        object : StandbyTransactionTransport {
+            override suspend fun exchange(
+                command: ByteArray,
+                expectedKind: StandbyResponseKind,
+                expectedState: StandbyState?
+            ): StandbyCommandExchangeResult = exchangeStandby(
+                command,
+                expectedKind,
+                expectedState
+            )
+
+            override suspend fun readBattery(): StandbyBatteryReadResult = try {
+                StandbyBatteryReadResult.Success(readBatteryInternal())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                StandbyBatteryReadResult.Failed(e.userMessage("Battery check failed"))
+            }
+        }
+
+    private fun ankleTransport(): AnkleTransactionTransport =
+        object : AnkleTransactionTransport {
+            override suspend fun exchangeStandbyQuery(): StandbyCommandExchangeResult =
+                exchangeStandby(StandbyProtocol.queryCommand(), StandbyResponseKind.QUERY)
+
+            override suspend fun exchangeAnkle(
+                command: ByteArray,
+                expectedKind: AnkleResponseKind,
+                onWriteAccepted: () -> Unit
+            ): AnkleCommandExchangeResult = this@FootGattSession.exchangeAnkle(
+                command,
+                expectedKind,
+                onWriteAccepted
+            )
+        }
+
+    private fun discardQueuedAa01Events() {
+        while (aa01Events.tryReceive().isSuccess) {
+            // A new command may only consume packets observed after this transaction point.
+        }
+    }
+
     private suspend fun exchangeStandby(
         command: ByteArray,
         expectedKind: StandbyResponseKind,
         expectedState: StandbyState? = null
     ): StandbyCommandExchangeResult {
-        while (aa01Notifications.tryReceive().isSuccess) {
-            // Drop stale responses before this command is written.
-        }
+        discardQueuedAa01Events()
         try {
             writeAa01(command)
         } catch (e: CancellationException) {
@@ -314,11 +412,11 @@ class FootGattSession(
         try {
             val response = withTimeout(COMMAND_RESPONSE_TIMEOUT_MS) {
                 while (true) {
-                    val parsed = StandbyProtocol.parseResponse(aa01Notifications.receive())
-                    if (parsed?.kind == expectedKind) {
-                        observed = parsed
-                        if (StandbyProtocol.matches(parsed, expectedKind, expectedState)) {
-                            return@withTimeout parsed
+                    val event = aa01Events.receive()
+                    if (event is Aa01Event.Standby && event.response.kind == expectedKind) {
+                        observed = event.response
+                        if (StandbyProtocol.matches(event.response, expectedKind, expectedState)) {
+                            return@withTimeout event.response
                         }
                     }
                 }
@@ -339,6 +437,67 @@ class FootGattSession(
         }
     }
 
+    private suspend fun exchangeAnkle(
+        command: ByteArray,
+        expectedKind: AnkleResponseKind,
+        onWriteAccepted: () -> Unit = {}
+    ): AnkleCommandExchangeResult {
+        discardQueuedAa01Events()
+        try {
+            writeAa01(command, onWriteStarted = onWriteAccepted)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return AnkleCommandExchangeResult.WriteFailed(
+                e.userMessage("Bluetooth command write failed")
+            )
+        }
+
+        return try {
+            val response = withTimeout(COMMAND_RESPONSE_TIMEOUT_MS) {
+                while (true) {
+                    val event = aa01Events.receive()
+                    if (event is Aa01Event.Ankle &&
+                        AnkleProtocol.matches(event.response, expectedKind)
+                    ) {
+                        return@withTimeout event.response
+                    }
+                }
+                @Suppress("UNREACHABLE_CODE")
+                error("unreachable")
+            }
+            AnkleCommandExchangeResult.Response(response)
+        } catch (_: TimeoutCancellationException) {
+            AnkleCommandExchangeResult.ResponseMissing("Ankle response timed out")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AnkleCommandExchangeResult.ResponseMissing(e.userMessage("Ankle response failed"))
+        }
+    }
+
+    private suspend fun awaitAutoEvent(timeoutMs: Long): AutoEventWaitResult = try {
+        withTimeout(timeoutMs) {
+            while (true) {
+                when (val event = aa01Events.receive()) {
+                    is Aa01Event.AutoActivity,
+                    is Aa01Event.AutoCompletion,
+                    is Aa01Event.Ankle -> return@withTimeout AutoEventWaitResult.Event(event)
+                    is Aa01Event.Standby,
+                    is Aa01Event.Unknown -> Unit
+                }
+            }
+            @Suppress("UNREACHABLE_CODE")
+            error("unreachable")
+        }
+    } catch (_: TimeoutCancellationException) {
+        AutoEventWaitResult.TimedOut
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        AutoEventWaitResult.Failed(e.userMessage("Automatic alignment response failed"))
+    }
+
     private fun requireResponse(result: StandbyCommandExchangeResult): StandbyResponse =
         when (result) {
             is StandbyCommandExchangeResult.Response -> result.response
@@ -346,9 +505,17 @@ class FootGattSession(
             is StandbyCommandExchangeResult.ResponseMissing -> throw BleSessionException(result.message)
         }
 
+    private fun requireAnkleResponse(result: AnkleCommandExchangeResult): AnkleResponse =
+        when (result) {
+            is AnkleCommandExchangeResult.Response -> result.response
+            is AnkleCommandExchangeResult.WriteFailed -> throw BleSessionException(result.message)
+            is AnkleCommandExchangeResult.ResponseMissing -> throw BleSessionException(result.message)
+        }
+
     private suspend fun runGattOperation(
         type: OperationType,
         characteristicUuid: UUID,
+        onStarted: () -> Unit = {},
         start: () -> Boolean
     ): GattResult = operationMutex.withLock {
         ensureUsableOrInitializing()
@@ -366,6 +533,7 @@ class FootGattSession(
                 throw BleSessionException("Could not start Bluetooth operation", e)
             }
             if (!started) throw BleSessionException("Android rejected the Bluetooth operation")
+            onStarted()
 
             val result = try {
                 withTimeout(GATT_OPERATION_TIMEOUT_MS) { deferred.await() }
@@ -520,7 +688,7 @@ class FootGattSession(
     private fun handleNotification(uuid: UUID, value: ByteArray?) {
         if (value == null) return
         when (uuid) {
-            Uuids.AA01 -> aa01Notifications.trySend(value.copyOf())
+            Uuids.AA01 -> aa01Events.trySend(Aa01Router.parse(value.copyOf()))
             Uuids.LEVEL -> {
                 val level = value.firstOrNull()?.toInt()?.and(0xFF)
                 if (level != null && level in 0..100) onBatteryNotification(level)

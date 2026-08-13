@@ -15,11 +15,16 @@ enum class BleOperationKind(val statusText: String) {
     LIVE_REFRESH("Checking..."),
     STANDBY_ON("Turning standby on..."),
     STANDBY_OFF("Turning standby off..."),
+    STANDBY_TOGGLE("Updating standby..."),
+    ANKLE_ADJUST("Adjusting ankle..."),
+    PRESET_APPLY("Applying preset..."),
+    AUTO_ALIGN("Automatic alignment"),
     DISCONNECT("Disconnecting...")
 }
 
 data class BleCoordinationState(
     val active: BleOperationKind? = null,
+    /** Historical name retained for compatibility; now reserves every user device-control action. */
     val standbyPending: BleOperationKind? = null
 ) {
     val isBusy: Boolean get() = active != null || standbyPending != null
@@ -41,7 +46,7 @@ sealed interface CoordinatedResult<out T> {
  */
 class OperationCoordinator {
     private val mutex = Mutex()
-    private val standbyReserved = AtomicBoolean(false)
+    private val deviceControlReserved = AtomicBoolean(false)
     private val _state = MutableStateFlow(BleCoordinationState())
     val state: StateFlow<BleCoordinationState> = _state.asStateFlow()
 
@@ -51,8 +56,8 @@ class OperationCoordinator {
         kind: BleOperationKind,
         block: suspend () -> T
     ): CoordinatedResult<T> {
-        if (standbyReserved.get() || !mutex.tryLock()) return CoordinatedResult.Busy
-        if (standbyReserved.get()) {
+        if (deviceControlReserved.get() || !mutex.tryLock()) return CoordinatedResult.Busy
+        if (deviceControlReserved.get()) {
             mutex.unlock()
             return CoordinatedResult.Busy
         }
@@ -72,7 +77,15 @@ class OperationCoordinator {
         block: suspend () -> T
     ): CoordinatedResult<T> {
         require(kind == BleOperationKind.STANDBY_ON || kind == BleOperationKind.STANDBY_OFF)
-        if (!standbyReserved.compareAndSet(false, true)) return CoordinatedResult.Busy
+        return runDeviceControl(kind, block)
+    }
+
+    suspend fun <T> runDeviceControl(
+        kind: BleOperationKind,
+        block: suspend () -> T
+    ): CoordinatedResult<T> {
+        require(kind in DEVICE_CONTROL_KINDS)
+        if (!deviceControlReserved.compareAndSet(false, true)) return CoordinatedResult.Busy
 
         _state.update { it.copy(standbyPending = kind) }
         var acquired = false
@@ -83,7 +96,7 @@ class OperationCoordinator {
             return CoordinatedResult.Completed(block())
         } finally {
             if (acquired) mutex.unlock()
-            standbyReserved.set(false)
+            deviceControlReserved.set(false)
             _state.update { current ->
                 current.copy(
                     active = if (current.active == kind) null else current.active,
@@ -91,6 +104,17 @@ class OperationCoordinator {
                 )
             }
         }
+    }
+
+    private companion object {
+        val DEVICE_CONTROL_KINDS = setOf(
+            BleOperationKind.STANDBY_ON,
+            BleOperationKind.STANDBY_OFF,
+            BleOperationKind.STANDBY_TOGGLE,
+            BleOperationKind.ANKLE_ADJUST,
+            BleOperationKind.PRESET_APPLY,
+            BleOperationKind.AUTO_ALIGN
+        )
     }
 
     private suspend fun <T> runLocked(
@@ -123,4 +147,9 @@ object BleOperationCoordinator {
 
     suspend fun <T> runStandby(kind: BleOperationKind, block: suspend () -> T): CoordinatedResult<T> =
         delegate.runStandby(kind, block)
+
+    suspend fun <T> runDeviceControl(
+        kind: BleOperationKind,
+        block: suspend () -> T
+    ): CoordinatedResult<T> = delegate.runDeviceControl(kind, block)
 }

@@ -22,7 +22,6 @@ class TransientStatusStore(private val durationMs: Long = 8_000L) {
         token
     }
 
-    /** Starting an operation deliberately discards any older result hidden behind it. */
     fun beginOperation() = clear()
 
     fun clear() = synchronized(guard) {
@@ -40,7 +39,6 @@ class TransientStatusStore(private val durationMs: Long = 8_000L) {
         }
     }
 
-    /** Returns true only when this callback cleared the still-current expired generation. */
     fun expire(token: TransientStatusToken, nowMs: Long): Boolean = synchronized(guard) {
         val value = current
         if (value?.token != token || nowMs < token.expiresAtMs) {
@@ -61,10 +59,13 @@ data class StateNotificationModel(
 data class StateNotificationContent(
     val title: String,
     val collapsedText: String,
+    val standbyText: String,
+    val angleSummaryText: String,
+    val summaryPreset: FootwearPreset?,
+    val operationText: String?,
     val expandedLines: List<String>
 )
 
-/** Pure precedence and battery presentation for both live and polling notification renders. */
 object NotificationStatePresentation {
     fun create(
         snapshot: SnapshotState,
@@ -79,28 +80,61 @@ object NotificationStatePresentation {
     )
 }
 
-/** Pure notification copy and expanded-line structure, independent of Android UI classes. */
+/** Status-only collapsed copy plus the expanded verified ankle/preset hierarchy. */
 object StateNotificationContentPresentation {
     fun create(
         display: SnapshotDisplayState,
+        ankle: AnkleState = AnkleState(),
+        presets: PresetState = PresetState(),
         formattedTime: String?,
         statusText: String?
     ): StateNotificationContent {
         val checkedLine = display.checkedLine(formattedTime)
         val resolvedStatus = statusText?.trim()?.takeIf { it.isNotEmpty() }
+        val confirmedMd = ankle.confirmedMd.takeIf { display.standby == StandbyState.OFF }
+        val matchedPreset = summaryPreset(presets, confirmedMd)
+        val angleSummary = when {
+            confirmedMd != null && matchedPreset != null ->
+                "${matchedPreset.summaryName} · Confirmed ${AnkleProtocol.format(confirmedMd)} ✓"
+            confirmedMd != null -> "Confirmed ${AnkleProtocol.format(confirmedMd)} ✓"
+            ankle.certainty == AnkleCertainty.UNKNOWN_AFTER_COMMAND ->
+                ankle.lastVerifiedMd?.let { "Unknown · Last verified ${AnkleProtocol.format(it)}" }
+                    ?: "Ankle angle unknown"
+            ankle.certainty == AnkleCertainty.UNKNOWN && ankle.lastVerifiedMd != null ->
+                "Unknown · Last verified ${AnkleProtocol.format(ankle.lastVerifiedMd)}"
+            ankle.confirmedMd != null ->
+                "Last verified ${AnkleProtocol.format(requireNotNull(ankle.confirmedMd))}"
+            else -> "Ankle angle unknown"
+        }
         val expandedLines = buildList {
             add(display.standbyLine)
+            add(angleSummary)
             add(checkedLine)
             display.verificationMessage?.let { addDistinct(it) }
             resolvedStatus?.let { addDistinct(it) }
         }
-        val collapsedText = resolvedStatus ?: display.verificationMessage?.let {
-            "${display.standbyLine} · $it"
-        } ?: "${display.standbyLine} · $checkedLine"
+        val collapsedText = when {
+            resolvedStatus != null -> resolvedStatus
+            display.verificationMessage != null ->
+                "${display.standbyLine} · ${display.verificationMessage}"
+            ankle.certainty == AnkleCertainty.UNKNOWN && ankle.lastVerifiedMd != null ->
+                "${display.standbyLine} · Ankle unknown"
+            confirmedMd == null && ankle.confirmedMd != null ->
+                "${display.standbyLine} · Last verified ${AnkleProtocol.format(requireNotNull(ankle.confirmedMd))}"
+            else -> buildList {
+                add(display.standbyLine)
+                matchedPreset?.let { add(it.summaryName) }
+                confirmedMd?.let { add(AnkleProtocol.format(it)) }
+            }.joinToString(" · ")
+        }
 
         return StateNotificationContent(
             title = display.batteryLine,
             collapsedText = collapsedText,
+            standbyText = display.standbyLine,
+            angleSummaryText = angleSummary,
+            summaryPreset = matchedPreset,
+            operationText = resolvedStatus,
             expandedLines = expandedLines
         )
     }
@@ -113,22 +147,41 @@ object StateNotificationContentPresentation {
 
 enum class StateNotificationAction {
     CHECK_NOW,
-    STANDBY_ON,
-    STANDBY_OFF
+    STANDBY,
+    AUTO
 }
 
 fun stateNotificationActions(
     display: SnapshotDisplayState,
+    ankle: AnkleState,
     includeActions: Boolean
 ): List<StateNotificationAction> {
     if (!includeActions) return emptyList()
     val actions = mutableListOf(StateNotificationAction.CHECK_NOW)
-    when (display.standbyAction) {
-        StandbyState.ON -> actions += StateNotificationAction.STANDBY_ON
-        StandbyState.OFF -> actions += StateNotificationAction.STANDBY_OFF
-        StandbyState.UNKNOWN, null -> Unit
+    if (display.standby != StandbyState.UNKNOWN) actions += StateNotificationAction.STANDBY
+    if (display.standby == StandbyState.OFF &&
+        ankle.certainty == AnkleCertainty.CONFIRMED &&
+        ankle.confirmedMd != null
+    ) {
+        actions += StateNotificationAction.AUTO
     }
     return actions
+}
+
+fun notificationPresetActions(
+    display: SnapshotDisplayState,
+    ankle: AnkleState,
+    presets: PresetState,
+    includeActions: Boolean
+): Set<FootwearPreset> {
+    if (!includeActions || display.standby != StandbyState.OFF ||
+        ankle.certainty != AnkleCertainty.CONFIRMED || ankle.confirmedMd == null
+    ) {
+        return emptySet()
+    }
+    return FootwearPreset.fixedOrder.filterTo(linkedSetOf()) {
+        presets.targets.target(it) != null
+    }
 }
 
 data class LiveBatteryRefreshPlan(

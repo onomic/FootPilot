@@ -45,14 +45,14 @@ fun mainScreenLayoutSpec(
             heightClass = heightClass,
             horizontalPaddingDp = 20f,
             verticalPaddingDp = 14f,
-            headerToGaugeGapDp = 14f,
-            gaugeSizeDp = 196f,
-            gaugeValueFontSizeSp = 56f,
-            gaugePercentFontSizeSp = 18f,
-            gaugeToDeviceGapDp = 12f,
+            headerToGaugeGapDp = 8f,
+            gaugeSizeDp = 132f,
+            gaugeValueFontSizeSp = 40f,
+            gaugePercentFontSizeSp = 15f,
+            gaugeToDeviceGapDp = 6f,
             deviceToThresholdGapDp = 4f,
-            metadataToCardGapDp = 16f,
-            cardMinHeightDp = 112f,
+            metadataToCardGapDp = 10f,
+            cardMinHeightDp = 92f,
             cardToStatusGapDp = 8f,
             statusSlotHeightDp = 36f,
             actionGapDp = 8f
@@ -61,14 +61,14 @@ fun mainScreenLayoutSpec(
             heightClass = heightClass,
             horizontalPaddingDp = 22f,
             verticalPaddingDp = 18f,
-            headerToGaugeGapDp = 18f,
-            gaugeSizeDp = 212f,
-            gaugeValueFontSizeSp = 60f,
-            gaugePercentFontSizeSp = 20f,
-            gaugeToDeviceGapDp = 14f,
+            headerToGaugeGapDp = 10f,
+            gaugeSizeDp = 148f,
+            gaugeValueFontSizeSp = 46f,
+            gaugePercentFontSizeSp = 16f,
+            gaugeToDeviceGapDp = 7f,
             deviceToThresholdGapDp = 4f,
-            metadataToCardGapDp = 16f,
-            cardMinHeightDp = 118f,
+            metadataToCardGapDp = 12f,
+            cardMinHeightDp = 96f,
             cardToStatusGapDp = 8f,
             statusSlotHeightDp = 36f,
             actionGapDp = 9f
@@ -77,14 +77,14 @@ fun mainScreenLayoutSpec(
             heightClass = heightClass,
             horizontalPaddingDp = 24f,
             verticalPaddingDp = 20f,
-            headerToGaugeGapDp = 22f,
-            gaugeSizeDp = 220f,
-            gaugeValueFontSizeSp = 64f,
-            gaugePercentFontSizeSp = 21f,
-            gaugeToDeviceGapDp = 16f,
+            headerToGaugeGapDp = 12f,
+            gaugeSizeDp = 168f,
+            gaugeValueFontSizeSp = 52f,
+            gaugePercentFontSizeSp = 18f,
+            gaugeToDeviceGapDp = 8f,
             deviceToThresholdGapDp = 4f,
-            metadataToCardGapDp = 18f,
-            cardMinHeightDp = 120f,
+            metadataToCardGapDp = 14f,
+            cardMinHeightDp = 100f,
             cardToStatusGapDp = 10f,
             statusSlotHeightDp = 36f,
             actionGapDp = 10f
@@ -184,6 +184,10 @@ fun mainScreenOperationText(operation: BleOperationKind?): String? = when (opera
     BleOperationKind.LIVE_REFRESH -> "Checking standby..."
     BleOperationKind.STANDBY_ON -> "Turning standby on..."
     BleOperationKind.STANDBY_OFF -> "Turning standby off..."
+    BleOperationKind.STANDBY_TOGGLE -> "Updating standby..."
+    BleOperationKind.ANKLE_ADJUST -> "Adjusting ankle..."
+    BleOperationKind.PRESET_APPLY -> "Applying preset..."
+    BleOperationKind.AUTO_ALIGN -> "Automatic alignment"
     BleOperationKind.DISCONNECT -> "Disconnecting..."
     null -> null
 }

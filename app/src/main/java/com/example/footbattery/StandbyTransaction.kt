@@ -64,6 +64,44 @@ object StandbyTransaction {
             )
         }
 
+        return executeFromInitial(requested, initial, transport)
+    }
+
+    /** Notification toggle derives its target from a fresh foot response, never rendered state. */
+    suspend fun executeToggle(
+        transport: StandbyTransactionTransport
+    ): StandbyTransactionRead {
+        val initial = when (val result = transport.exchange(
+            StandbyProtocol.queryCommand(),
+            StandbyResponseKind.QUERY
+        )) {
+            is StandbyCommandExchangeResult.Response -> result.response.state
+            is StandbyCommandExchangeResult.WriteFailed -> return failure(
+                StandbyState.UNKNOWN,
+                "Could not verify standby: ${result.message}"
+            )
+            is StandbyCommandExchangeResult.ResponseMissing -> return failure(
+                StandbyState.UNKNOWN,
+                "Could not verify standby: ${result.message}"
+            )
+        }
+        val requested = when (initial) {
+            StandbyState.ON -> StandbyState.OFF
+            StandbyState.OFF -> StandbyState.ON
+            StandbyState.UNKNOWN -> return failure(
+                StandbyState.UNKNOWN,
+                "Could not verify standby"
+            )
+        }
+        return executeFromInitial(requested, initial, transport)
+    }
+
+    private suspend fun executeFromInitial(
+        requested: StandbyState,
+        initial: StandbyState,
+        transport: StandbyTransactionTransport
+    ): StandbyTransactionRead {
+
         var setWriteAccepted = false
         val finalState = if (initial == requested) {
             initial

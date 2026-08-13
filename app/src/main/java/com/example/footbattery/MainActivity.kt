@@ -20,6 +20,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -44,6 +45,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -63,6 +65,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
@@ -71,6 +74,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -79,6 +83,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
 
@@ -140,6 +148,8 @@ class MainActivity : ComponentActivity() {
         intervalMin = Prefs.intervalMin(this)
         pairingCode = Prefs.pairingCode(this)
         BatteryRepo.ensureInitialized(this)
+        AnkleRepo.ensureInitialized(this)
+        PresetRepository.ensureInitialized(this)
         bluetoothAvailable = canUseBluetooth()
         if (!bluetoothAvailable) BatteryRepo.status.value = bluetoothUnavailableStatus()
         Alerts.ensureChannels(this)
@@ -159,7 +169,19 @@ class MainActivity : ComponentActivity() {
                 val standbyStatus by BatteryRepo.standbyStatus.collectAsState()
                 val connectionState by BatteryRepo.connectionState.collectAsState()
                 val coordination by BleOperationCoordinator.state.collectAsState()
+                val ankleState by AnkleRepo.state.collectAsState()
+                val presetState by PresetRepository.state.collectAsState()
                 val latestRunning by rememberUpdatedState(running)
+
+                LaunchedEffect(ankleState.message) {
+                    val message = ankleState.message ?: return@LaunchedEffect
+                    delay(8_000L)
+                    if (AnkleRepo.state.value.message == message &&
+                        AnkleRepo.state.value.operation == AnkleOperation.IDLE
+                    ) {
+                        AnkleRepo.clearMessage()
+                    }
+                }
 
                 LaunchedEffect(Unit) {
                     while (true) {
@@ -215,6 +237,8 @@ class MainActivity : ComponentActivity() {
                         connectionState = connectionState,
                         snapshot = snapshot,
                         standbyStatus = standbyStatus,
+                        ankleState = ankleState,
+                        presetState = presetState,
                         operation = coordination.visibleOperation,
                         bluetoothAvailable = bluetoothAvailable,
                         threshold = threshold,
@@ -223,6 +247,10 @@ class MainActivity : ComponentActivity() {
                         onStop = ::requestStopMonitoring,
                         onCheck = ::checkNow,
                         onStandby = ::changeStandby,
+                        onFineAdjust = ::fineAdjust,
+                        onPreset = ::selectPreset,
+                        onSavePreset = ::savePreset,
+                        onAutoAlign = ::autoAlign,
                         onSettings = { showSettings = true }
                     )
                 }
@@ -359,6 +387,48 @@ class MainActivity : ComponentActivity() {
         Alerts.ensureChannels(this)
         FootOperations.launchStandbyChange(applicationContext, requested)
     }
+
+    private fun fineAdjust(adjustment: FineAdjustment) {
+        if (!hasAll()) { permLauncher.launch(neededPerms()); return }
+        Alerts.ensureChannels(this)
+        FootOperations.launchFineAdjustment(applicationContext, adjustment)
+    }
+
+    private fun selectPreset(preset: FootwearPreset) {
+        PresetRepository.select(preset)
+        val target = PresetRepository.state.value.targets.target(preset)
+        if (target == null) {
+            val message = "${preset.displayName} has no saved angle; use Save preset to configure it"
+            AnkleRepo.fail(message)
+            Alerts.refreshApplicable(applicationContext, message)
+            return
+        }
+        if (!hasAll()) { permLauncher.launch(neededPerms()); return }
+        Alerts.ensureChannels(this)
+        FootOperations.launchPreset(applicationContext, preset)
+    }
+
+    private fun savePreset() {
+        val confirmed = AnkleRepo.state.value.confirmedMd
+        if (confirmed == null) {
+            val message = "A confirmed ankle angle is required before saving"
+            AnkleRepo.fail(message)
+            Alerts.refreshApplicable(applicationContext, message)
+            return
+        }
+        val saved = PresetRepository.saveSelected(applicationContext, confirmed)
+        val message = saved?.let {
+            "${it.displayName} saved at ${AnkleProtocol.format(confirmed)}"
+        } ?: "Select Barefoot, Running, Dress, or Boots before saving"
+        AnkleRepo.fail(message)
+        Alerts.refreshApplicable(applicationContext, message)
+    }
+
+    private fun autoAlign() {
+        if (!hasAll()) { permLauncher.launch(neededPerms()); return }
+        Alerts.ensureChannels(this)
+        FootOperations.launchAutoAlign(applicationContext)
+    }
 }
 
 // ---------- Main screen ----------
@@ -371,6 +441,8 @@ private fun MainScreen(
     connectionState: LiveConnectionState,
     snapshot: SnapshotState,
     standbyStatus: String,
+    ankleState: AnkleState,
+    presetState: PresetState,
     operation: BleOperationKind?,
     bluetoothAvailable: Boolean,
     threshold: Int,
@@ -379,11 +451,15 @@ private fun MainScreen(
     onStop: () -> Unit,
     onCheck: () -> Unit,
     onStandby: (StandbyState) -> Unit,
+    onFineAdjust: (FineAdjustment) -> Unit,
+    onPreset: (FootwearPreset) -> Unit,
+    onSavePreset: () -> Unit,
+    onAutoAlign: () -> Unit,
     onSettings: () -> Unit
 ) {
     val accent = colorForLevel(level)
     val ready = connectionState == LiveConnectionState.READY
-    val busy = operation != null
+    val busy = operation != null || ankleState.operation != AnkleOperation.IDLE
     val canUseConnection = !running || ready
     val modePresentation = mainScreenModePresentation(
         liveReady = ready,
@@ -393,9 +469,15 @@ private fun MainScreen(
     val display = SnapshotPresentation.create(snapshot)
     val presentation = MainScreenPresentation.create(
         activeOperationText = mainScreenOperationText(operation),
-        verificationMessage = display.verificationMessage,
+        verificationMessage = ankleState.message ?: display.verificationMessage,
         standbyStatus = standbyStatus,
         generalStatus = status
+    )
+    val controlsReady = bluetoothAvailable && !busy && canUseConnection
+    val anklePresentation = AnklePresentation.create(
+        state = ankleState,
+        standby = display.standby,
+        controlsReady = controlsReady
     )
     val fontScale = LocalDensity.current.fontScale
 
@@ -413,36 +495,51 @@ private fun MainScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             MainHeader(presentation = modePresentation, onSettings = onSettings)
+            Column(
+                Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Spacer(Modifier.height(layout.headerToGaugeGapDp.dp))
+                BatteryGauge(
+                    level = level,
+                    accent = accent,
+                    size = layout.gaugeSizeDp.dp,
+                    valueFontSizeSp = layout.gaugeValueFontSizeSp,
+                    percentFontSizeSp = layout.gaugePercentFontSizeSp
+                )
+                Spacer(Modifier.height(layout.gaugeToDeviceGapDp.dp))
 
-            Spacer(Modifier.height(layout.headerToGaugeGapDp.dp))
-            BatteryGauge(
-                level = level,
-                accent = accent,
-                size = layout.gaugeSizeDp.dp,
-                valueFontSizeSp = layout.gaugeValueFontSizeSp,
-                percentFontSizeSp = layout.gaugePercentFontSizeSp
-            )
-            Spacer(Modifier.height(layout.gaugeToDeviceGapDp.dp))
+                DeviceMetadata(
+                    threshold = threshold,
+                    deviceToThresholdGap = layout.deviceToThresholdGapDp.dp
+                )
+                Spacer(Modifier.height(layout.metadataToCardGapDp.dp))
 
-            DeviceMetadata(
-                threshold = threshold,
-                deviceToThresholdGap = layout.deviceToThresholdGapDp.dp
-            )
-            Spacer(Modifier.height(layout.metadataToCardGapDp.dp))
-
-            StandbyCard(
-                display = display,
-                minHeight = layout.cardMinHeightDp.dp,
-                enabled = bluetoothAvailable && !busy && canUseConnection &&
-                    snapshot.standby != StandbyState.UNKNOWN,
-                onChange = onStandby
-            )
-            Spacer(Modifier.height(layout.cardToStatusGapDp.dp))
-            MainScreenStatusSlot(
-                presentation = presentation,
-                height = layout.statusSlotHeightDp.dp
-            )
-            Spacer(Modifier.weight(1f))
+                StandbyCard(
+                    display = display,
+                    minHeight = layout.cardMinHeightDp.dp,
+                    enabled = controlsReady && snapshot.standby != StandbyState.UNKNOWN,
+                    onChange = onStandby
+                )
+                Spacer(Modifier.height(layout.cardToStatusGapDp.dp))
+                AnkleAlignmentCard(
+                    state = ankleState,
+                    presentation = anklePresentation,
+                    presets = presetState,
+                    interactionReady = controlsReady,
+                    standby = display.standby,
+                    onFineAdjust = onFineAdjust,
+                    onPreset = onPreset,
+                    onSavePreset = onSavePreset,
+                    onAutoAlign = onAutoAlign
+                )
+                Spacer(Modifier.height(layout.cardToStatusGapDp.dp))
+                MainScreenStatusSlot(
+                    presentation = presentation,
+                    height = layout.statusSlotHeightDp.dp
+                )
+                Spacer(Modifier.height(8.dp))
+            }
             ContextualActionRow(
                 accent = accent,
                 running = running,
@@ -664,6 +761,372 @@ private fun StandbyCard(
             )
         )
     }
+}
+
+@Composable
+private fun AnkleAlignmentCard(
+    state: AnkleState,
+    presentation: AnkleValuePresentation,
+    presets: PresetState,
+    interactionReady: Boolean,
+    standby: StandbyState,
+    onFineAdjust: (FineAdjustment) -> Unit,
+    onPreset: (FootwearPreset) -> Unit,
+    onSavePreset: () -> Unit,
+    onAutoAlign: () -> Unit
+) {
+    val autoRunning = state.operation in setOf(
+        AnkleOperation.AUTO_STARTING,
+        AnkleOperation.AUTO_RUNNING,
+        AnkleOperation.VERIFYING
+    )
+    val currentConfirmedMd = state.confirmedMd.takeIf { standby == StandbyState.OFF }
+    val activeMatches = presets.targets.activeMatches(currentConfirmedMd)
+    val summary = summaryPreset(presets, currentConfirmedMd) ?: presets.selected
+    val presetSelectionReady = state.operation == AnkleOperation.IDLE
+
+    Column(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Panel)
+            .border(1.dp, Line, RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "ANKLE ALIGNMENT",
+                color = Muted,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(
+                onClick = onAutoAlign,
+                enabled = presentation.movementEnabled && !autoRunning,
+                modifier = Modifier.semantics {
+                    contentDescription = if (presentation.movementEnabled) {
+                        "Start automatic ankle alignment"
+                    } else {
+                        "Automatic ankle alignment unavailable until standby is off and angle is verified"
+                    }
+                }
+            ) {
+                Text("Auto align", fontWeight = FontWeight.Bold)
+            }
+            Text(
+                "ⓘ",
+                color = Muted,
+                fontSize = 18.sp,
+                modifier = Modifier.semantics {
+                    contentDescription = "Ankle alignment information"
+                }
+            )
+        }
+
+        if (autoRunning) {
+            AutoAlignmentCardBody(state.operation)
+            return@Column
+        }
+
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (summary != null) {
+                Image(
+                    painter = painterResource(presetDrawableRes(summary)),
+                    contentDescription = "${summary.displayName} footwear artwork",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(width = 66.dp, height = 48.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    summary?.summaryName ?: "Current alignment",
+                    color = Ink,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    if (state.operation == AnkleOperation.SETTING) {
+                        state.message ?: "Adjusting ankle..."
+                    } else {
+                        presentation.statusText
+                    },
+                    color = if (presentation.isCurrentConfirmed) Accent else Muted,
+                    fontSize = 12.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                presentation.historicalText?.let {
+                    Text(it, color = Muted, fontSize = 11.sp, maxLines = 2)
+                }
+            }
+            if (presentation.isCurrentConfirmed) {
+                Text(
+                    "✓",
+                    color = Accent,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.semantics { contentDescription = "Device confirmed" }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(6.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            FootwearPreset.fixedOrder.forEach { preset ->
+                val configured = presets.targets.target(preset) != null
+                PresetCell(
+                    preset = preset,
+                    configured = configured,
+                    selectedForSave = presets.selected == preset,
+                    physicallyActive = preset in activeMatches,
+                    enabled = presetSelectionReady && (
+                        !configured || presentation.movementEnabled && interactionReady
+                    ),
+                    onClick = { onPreset(preset) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "QUICK ADJUST",
+            color = Muted,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            ShoeHeightChange.APPROVED_V1.forEach { change ->
+                OutlinedButton(
+                    onClick = {},
+                    enabled = false,
+                    modifier = Modifier.weight(1f).heightIn(min = 42.dp).semantics {
+                        contentDescription = "${change.label}, unavailable. Calibration required"
+                    },
+                    border = BorderStroke(1.dp, Line),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        disabledContentColor = Muted.copy(alpha = 0.65f)
+                    ),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        horizontal = 4.dp,
+                        vertical = 4.dp
+                    )
+                ) {
+                    Text(change.label, fontSize = 11.sp, maxLines = 1)
+                }
+            }
+        }
+        Text(
+            "Calibration required",
+            color = Muted,
+            fontSize = 10.sp,
+            modifier = Modifier.fillMaxWidth().padding(top = 3.dp),
+            textAlign = TextAlign.End
+        )
+
+        Spacer(Modifier.height(10.dp))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "FINE ADJUST (DEGREES)",
+            color = Muted,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace
+        )
+        Spacer(Modifier.height(5.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            FineAdjustButton(
+                label = "−",
+                enabled = presentation.minusEnabled,
+                description = "Decrease ankle angle by 0.1 degrees",
+                onClick = { onFineAdjust(FineAdjustment.MINUS) }
+            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    presentation.angleText,
+                    color = if (presentation.isCurrentConfirmed) Ink else Muted,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1
+                )
+                Text("Fine tune alignment", color = Muted, fontSize = 11.sp)
+            }
+            FineAdjustButton(
+                label = "+",
+                enabled = presentation.plusEnabled,
+                description = "Increase ankle angle by 0.1 degrees",
+                onClick = { onFineAdjust(FineAdjustment.PLUS) }
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+        TextButton(
+            onClick = onSavePreset,
+            enabled = state.confirmedMd != null && presets.selected != null &&
+                state.operation == AnkleOperation.IDLE,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics {
+                contentDescription = if (presets.selected == null) {
+                    "Save preset unavailable. Select a footwear preset first"
+                } else if (state.confirmedMd == null) {
+                    "Save preset unavailable. Confirm ankle angle first"
+                } else {
+                    "Save current confirmed angle to ${presets.selected.displayName}"
+                }
+            }
+        ) {
+            Text("▯", fontSize = 22.sp)
+            Spacer(Modifier.width(8.dp))
+            Text("Save preset", fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun AutoAlignmentCardBody(operation: AnkleOperation) {
+    Column(
+        Modifier.fillMaxWidth().heightIn(min = 190.dp).padding(horizontal = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        CircularProgressIndicator(
+            color = Accent,
+            trackColor = RingTrack,
+            modifier = Modifier.size(42.dp).semantics {
+                contentDescription = "Automatic alignment in progress"
+            }
+        )
+        Spacer(Modifier.height(14.dp))
+        Text(
+            if (operation == AnkleOperation.VERIFYING) {
+                "Verifying alignment"
+            } else {
+                "Automatic alignment"
+            },
+            color = Ink,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(7.dp))
+        Text(
+            "Keep foot flat until the second beep, then lift your foot.",
+            color = Muted,
+            fontSize = 13.sp,
+            lineHeight = 18.sp,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun PresetCell(
+    preset: FootwearPreset,
+    configured: Boolean,
+    selectedForSave: Boolean,
+    physicallyActive: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val border = when {
+        physicallyActive -> Accent
+        selectedForSave -> Accent.copy(alpha = 0.75f)
+        else -> Line
+    }
+    val description = buildString {
+        append(preset.displayName)
+        append(" preset")
+        if (!configured) append(", no saved angle")
+        if (selectedForSave) append(", selected for saving")
+        if (physicallyActive) append(", matches confirmed foot angle")
+        if (!enabled) append(", unavailable")
+    }
+    Column(
+        modifier.heightIn(min = 80.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (physicallyActive) Bg else Panel)
+            .border(1.dp, border, RoundedCornerShape(12.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .semantics {
+                contentDescription = description
+                this.selected = selectedForSave
+            }
+            .padding(horizontal = 3.dp, vertical = 5.dp)
+            .alpha(if (configured) 1f else 0.55f),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Image(
+            painter = painterResource(presetDrawableRes(preset)),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxWidth().height(40.dp)
+        )
+        Text(
+            if (physicallyActive) "${preset.displayName} ✓" else preset.displayName,
+            color = if (physicallyActive) Accent else Ink,
+            fontSize = 10.sp,
+            fontWeight = if (selectedForSave || physicallyActive) FontWeight.Bold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun FineAdjustButton(
+    label: String,
+    enabled: Boolean,
+    description: String,
+    onClick: () -> Unit
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.size(50.dp).semantics {
+            contentDescription = if (enabled) description else "$description, unavailable"
+        },
+        shape = CircleShape,
+        border = BorderStroke(1.dp, if (enabled) Line else Line.copy(alpha = 0.5f)),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = Ink,
+            disabledContentColor = Muted.copy(alpha = 0.5f)
+        )
+    ) {
+        Text(label, fontSize = 24.sp)
+    }
+}
+
+private fun presetDrawableRes(preset: FootwearPreset): Int = when (preset) {
+    FootwearPreset.BAREFOOT -> R.drawable.preset_barefoot
+    FootwearPreset.RUNNING -> R.drawable.preset_running
+    FootwearPreset.DRESS -> R.drawable.preset_dress
+    FootwearPreset.BOOTS -> R.drawable.preset_boots
 }
 
 @Composable

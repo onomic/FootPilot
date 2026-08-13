@@ -13,7 +13,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
-/** Foreground executor for notification Check now and standby actions. */
+/** Foreground executor for all notification actions through shared high-level operations. */
 class CheckNowService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val activeStarts = AtomicInteger(0)
@@ -25,8 +25,12 @@ class CheckNowService : Service() {
         val action = intent?.action
         val operationText = when (action) {
             Alerts.ACTION_CHECK_NOW -> "Checking..."
-            Alerts.ACTION_STANDBY_ON -> "Turning standby on..."
-            Alerts.ACTION_STANDBY_OFF -> "Turning standby off..."
+            Alerts.ACTION_STANDBY -> "Updating standby..."
+            Alerts.ACTION_AUTO -> "Automatic alignment"
+            Alerts.ACTION_PRESET_BAREFOOT -> "Applying Barefoot preset..."
+            Alerts.ACTION_PRESET_RUNNING -> "Applying Running preset..."
+            Alerts.ACTION_PRESET_DRESS -> "Applying Dress preset..."
+            Alerts.ACTION_PRESET_BOOTS -> "Applying Boots preset..."
             else -> {
                 stopSelf(startId)
                 return START_NOT_STICKY
@@ -35,6 +39,8 @@ class CheckNowService : Service() {
 
         val ctx = applicationContext
         BatteryRepo.ensureInitialized(ctx)
+        AnkleRepo.ensureInitialized(ctx)
+        PresetRepository.ensureInitialized(ctx)
         Alerts.ensureChannels(ctx)
         val liveMonitoring = LiveConnection.isMonitoringRequested()
         if (!liveMonitoring) Alerts.cancelOngoing(ctx)
@@ -61,8 +67,16 @@ class CheckNowService : Service() {
             try {
                 val result = when (action) {
                     Alerts.ACTION_CHECK_NOW -> FootOperations.checkNow(ctx, CheckOrigin.NOTIFICATION)
-                    Alerts.ACTION_STANDBY_ON -> FootOperations.changeStandby(ctx, StandbyState.ON)
-                    Alerts.ACTION_STANDBY_OFF -> FootOperations.changeStandby(ctx, StandbyState.OFF)
+                    Alerts.ACTION_STANDBY -> FootOperations.toggleStandby(ctx)
+                    Alerts.ACTION_AUTO -> FootOperations.autoAlign(ctx)
+                    Alerts.ACTION_PRESET_BAREFOOT ->
+                        FootOperations.applyPreset(ctx, FootwearPreset.BAREFOOT)
+                    Alerts.ACTION_PRESET_RUNNING ->
+                        FootOperations.applyPreset(ctx, FootwearPreset.RUNNING)
+                    Alerts.ACTION_PRESET_DRESS ->
+                        FootOperations.applyPreset(ctx, FootwearPreset.DRESS)
+                    Alerts.ACTION_PRESET_BOOTS ->
+                        FootOperations.applyPreset(ctx, FootwearPreset.BOOTS)
                     else -> FootOperationResult.Failed("Unknown operation")
                 }
                 if (result is FootOperationResult.Busy) {
