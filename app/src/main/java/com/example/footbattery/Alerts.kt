@@ -10,7 +10,6 @@ import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -280,12 +279,14 @@ object Alerts {
         presets: PresetState,
         includeActions: Boolean
     ): RemoteViews = RemoteViews(ctx.packageName, R.layout.notification_state_expanded).apply {
+        val brandGreen = ContextCompat.getColor(ctx, R.color.footbattery_green_notification)
+        val neutralIcon = ContextCompat.getColor(ctx, R.color.footbattery_icon_neutral)
         setTextViewText(R.id.notification_expanded_battery_label, content.batteryLabel)
         setTextViewText(R.id.notification_expanded_battery_value, content.batteryValue)
         setTextViewText(R.id.notification_expanded_standby, content.standbyText)
         setTextViewText(R.id.notification_angle_text, content.angleStatusText)
         if (content.angleStatusConfirmed) {
-            setTextColor(R.id.notification_angle_text, Color.parseColor("#34E0A1"))
+            setTextColor(R.id.notification_angle_text, brandGreen)
         }
         val summary = content.summaryPreset
         if (summary == null) {
@@ -295,6 +296,11 @@ object Alerts {
             setViewVisibility(R.id.notification_summary_image, View.VISIBLE)
             setViewVisibility(R.id.notification_summary_name, View.VISIBLE)
             setImageViewResource(R.id.notification_summary_image, presetDrawable(summary))
+            setInt(
+                R.id.notification_summary_image,
+                "setColorFilter",
+                if (content.angleStatusConfirmed) brandGreen else neutralIcon
+            )
             setTextViewText(R.id.notification_summary_name, content.summaryPresetName)
         }
         val operation = content.operationText
@@ -326,8 +332,13 @@ object Alerts {
             setFloat(presetCellId(preset), "setAlpha", presetPresentation.cellAlpha)
             setTextViewText(presetLabelId(preset), presetPresentation.label)
             if (active) {
-                setTextColor(presetLabelId(preset), Color.parseColor("#34E0A1"))
+                setTextColor(presetLabelId(preset), brandGreen)
             }
+            setInt(
+                presetImageId(preset),
+                "setColorFilter",
+                if (active) brandGreen else neutralIcon
+            )
             setInt(presetImageId(preset), "setImageAlpha", presetPresentation.imageAlpha)
             if (presetPresentation.visualState in setOf(
                     NotificationPresetVisualState.ACTIVE_ACTIONABLE,

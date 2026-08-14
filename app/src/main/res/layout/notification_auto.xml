@@ -31,7 +31,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="5dp"
-            android:textColor="#34E0A1"
+            android:textColor="@color/footbattery_green_notification"
             android:textSize="22sp"
             android:textStyle="bold"
             tools:text="93%" />
@@ -44,7 +44,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="5dp"
         android:text="@string/automatic_alignment"
-        android:textColor="#34E0A1"
+        android:textColor="@color/footbattery_green_notification"
         android:textSize="16sp"
         android:textStyle="bold" />
 

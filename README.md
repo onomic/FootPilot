@@ -72,6 +72,12 @@ store only a user-saved, foot-confirmed exact angle. Selecting an unconfigured p
 the foot. Auto Alignment is event-driven and always finishes with an ankle query; its observed
 status bytes (`00`, `1E`, and `3C`) remain opaque, and Auto never overwrites a preset.
 
+The beta2 UI uses the owner's replacement line-art footwear family. Summary and preset artwork keep
+their native aspect ratios with Fit rendering, so toes, heels, the boot shaft, and Running speed lines
+remain visible at phone and wide-screen widths. The always-dark app uses the centralized FootBattery
+green `#16D13A`; notification accents use the darker `#0B7A1D` on light SystemUI surfaces and
+`#16D13A` in dark mode.
+
 Every movement path—including notification actions—rechecks Bluetooth/session readiness and
 freshly queries standby at execution time. Movement proceeds only when the foot reports standby
 OFF. A successful Android write is not optimistic confirmation: the final ankle query is
@@ -91,7 +97,10 @@ revalidated when tapped, so an old rendered notification cannot bypass current s
 state. Custom notification content is transparent inside Android's native notification surface and
 uses notification-aware text appearances for readability in light and dark system themes.
 
-The physical-validation build identifies itself as `1.2.0-beta1` (`versionCode 2`); the version is
+API 34 emulator checks cover approximately 360dp and 785dp app widths plus light/dark collapsed and
+expanded notifications. Physical Samsung/One UI verification remains an owner-run beta check.
+
+The physical-validation build identifies itself as `1.2.0-beta2` (`versionCode 3`); the version is
 shown unobtrusively at the bottom of Settings.
 
 ## Make background alerts reliable

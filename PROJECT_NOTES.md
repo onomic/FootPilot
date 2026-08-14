@@ -26,16 +26,22 @@
 > absolute-set transaction. Fine adjustment clears physical active matching when the confirmed
 > value no longer equals a saved target. Auto is event-driven, treats observed `00`/`1E`/`3C`
 > activity values as opaque, requires completion plus a final query for success, and never updates
-> preset storage. The supplied footwear artwork is used in the app and expanded notification.
+> preset storage. Beta2 uses the owner's replacement line-art footwear family in the app and expanded
+> notification. Artwork is aspect-preserving Fit/fitCenter at both phone and wide-screen widths; the
+> full Barefoot toes, Running speed lines, Dress heel/toe, and Boots shaft/toe remain in-frame.
 >
 > The collapsed notification is status-only. In a normal safe state the expanded notification shows
 > the four presets and exactly Check / Standby / Auto native actions. Custom `RemoteViews` content is
 > transparent inside the SystemUI-owned notification surface and uses notification-aware text
-> appearances in light and dark themes. Taps revalidate current permission, Bluetooth, session,
+> appearances in light and dark themes. Brand color tokens are centralized in Android resources: the
+> dark app and dark notifications use `#16D13A`, while light notifications use the higher-contrast
+> `#0B7A1D`. Taps revalidate current permission, Bluetooth, session,
 > configured-preset, bounds, and fresh standby truth at execution time. Quick Adjust is intentionally
 > hidden until verified calibration is configured: no approved inch-to-angle calibration exists, so
 > no inch movement or guessed conversion is available. The physical-validation build is
-> `1.2.0-beta1` (`versionCode 2`).
+> `1.2.0-beta2` (`versionCode 3`). API 34 emulator checks passed at approximately 360dp and 785dp
+> app widths and for light/dark collapsed and expanded notifications. Physical Samsung/One UI and
+> owner hardware validation remain pending until run on the target device.
 >
 > **Physical validation remains pending.** Software tests cannot establish movement safety. The
 > owner should perform the seated and supported checklist in the “Ankle Alignment v1 hardware

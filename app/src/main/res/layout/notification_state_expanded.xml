@@ -35,7 +35,7 @@
             android:layout_marginStart="5dp"
             android:ellipsize="end"
             android:maxLines="1"
-            android:textColor="#34E0A1"
+            android:textColor="@color/footbattery_green_notification"
             android:textSize="22sp"
             android:textStyle="bold"
             tools:text="93%" />
@@ -60,11 +60,11 @@
 
         <ImageView
             android:id="@+id/notification_summary_image"
-            android:layout_width="42dp"
-            android:layout_height="32dp"
-            android:layout_marginEnd="6dp"
+            android:layout_width="56dp"
+            android:layout_height="42dp"
+            android:layout_marginEnd="8dp"
             android:contentDescription="@string/ankle_preset_artwork"
-            android:scaleType="centerCrop" />
+            android:scaleType="fitCenter" />
 
         <LinearLayout
             android:layout_width="0dp"
@@ -119,7 +119,7 @@
         <LinearLayout
             android:id="@+id/notification_preset_barefoot"
             android:layout_width="0dp"
-            android:layout_height="64dp"
+            android:layout_height="76dp"
             android:layout_marginEnd="3dp"
             android:layout_weight="1"
             android:background="@drawable/notification_preset_disabled"
@@ -129,10 +129,10 @@
 
             <ImageView
                 android:id="@+id/notification_preset_barefoot_image"
-                android:layout_width="42dp"
-                android:layout_height="34dp"
+                android:layout_width="56dp"
+                android:layout_height="44dp"
                 android:contentDescription="@string/preset_barefoot"
-                android:scaleType="centerCrop"
+                android:scaleType="fitCenter"
                 android:src="@drawable/preset_barefoot" />
 
             <TextView
@@ -149,7 +149,7 @@
         <LinearLayout
             android:id="@+id/notification_preset_running"
             android:layout_width="0dp"
-            android:layout_height="64dp"
+            android:layout_height="76dp"
             android:layout_marginStart="3dp"
             android:layout_marginEnd="3dp"
             android:layout_weight="1"
@@ -160,10 +160,10 @@
 
             <ImageView
                 android:id="@+id/notification_preset_running_image"
-                android:layout_width="42dp"
-                android:layout_height="34dp"
+                android:layout_width="56dp"
+                android:layout_height="44dp"
                 android:contentDescription="@string/preset_running"
-                android:scaleType="centerCrop"
+                android:scaleType="fitCenter"
                 android:src="@drawable/preset_running" />
 
             <TextView
@@ -180,7 +180,7 @@
         <LinearLayout
             android:id="@+id/notification_preset_dress"
             android:layout_width="0dp"
-            android:layout_height="64dp"
+            android:layout_height="76dp"
             android:layout_marginStart="3dp"
             android:layout_marginEnd="3dp"
             android:layout_weight="1"
@@ -191,10 +191,10 @@
 
             <ImageView
                 android:id="@+id/notification_preset_dress_image"
-                android:layout_width="42dp"
-                android:layout_height="34dp"
+                android:layout_width="56dp"
+                android:layout_height="44dp"
                 android:contentDescription="@string/preset_dress"
-                android:scaleType="centerCrop"
+                android:scaleType="fitCenter"
                 android:src="@drawable/preset_dress" />
 
             <TextView
@@ -211,7 +211,7 @@
         <LinearLayout
             android:id="@+id/notification_preset_boots"
             android:layout_width="0dp"
-            android:layout_height="64dp"
+            android:layout_height="76dp"
             android:layout_marginStart="3dp"
             android:layout_weight="1"
             android:background="@drawable/notification_preset_disabled"
@@ -221,10 +221,10 @@
 
             <ImageView
                 android:id="@+id/notification_preset_boots_image"
-                android:layout_width="42dp"
-                android:layout_height="34dp"
+                android:layout_width="56dp"
+                android:layout_height="44dp"
                 android:contentDescription="@string/preset_boots"
-                android:scaleType="centerCrop"
+                android:scaleType="fitCenter"
                 android:src="@drawable/preset_boots" />
 
             <TextView

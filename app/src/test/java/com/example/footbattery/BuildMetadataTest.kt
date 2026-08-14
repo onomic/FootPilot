@@ -5,7 +5,7 @@ import org.junit.Test
 
 class BuildMetadataTest {
     @Test fun physicalValidationBuildUsesBetaVersionMetadata() {
-        assertEquals("1.2.0-beta1", BuildConfig.VERSION_NAME)
-        assertEquals(2, BuildConfig.VERSION_CODE)
+        assertEquals("1.2.0-beta2", BuildConfig.VERSION_NAME)
+        assertEquals(3, BuildConfig.VERSION_CODE)
     }
 }

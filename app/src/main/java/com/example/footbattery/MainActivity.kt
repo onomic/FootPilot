@@ -73,9 +73,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -84,7 +87,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -96,18 +98,17 @@ private val Panel = Color(0xFF121817)
 private val Line = Color(0xFF24302E)
 private val Ink = Color(0xFFE8EFED)
 private val Muted = Color(0xFF7C8D89)
-private val Accent = Color(0xFF34E0A1)
 private val Warn = Color(0xFFF5B94A)
 private val Crit = Color(0xFFF0604D)
 private val RingTrack = Color(0xFF1A2422)
 
 private val INTERVALS = listOf(15 to "15m", 30 to "30m", 60 to "1h", 120 to "2h")
 
-private fun colorForLevel(level: Int?): Color = when {
+private fun colorForLevel(level: Int?, normal: Color): Color = when {
     level == null -> Muted
     level <= 15 -> Crit
     level <= 35 -> Warn
-    else -> Accent
+    else -> normal
 }
 
 /** Reports the foot's actual system-level GATT connection state, for diagnostics. */
@@ -162,7 +163,14 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
 
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Bg, surface = Bg)) {
+            val footBatteryGreen = colorResource(R.color.footbattery_green_app)
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    primary = footBatteryGreen,
+                    background = Bg,
+                    surface = Bg
+                )
+            ) {
                 val level by BatteryRepo.level.collectAsState()
                 val status by BatteryRepo.status.collectAsState()
                 val running by BatteryRepo.running.collectAsState()
@@ -458,7 +466,7 @@ private fun MainScreen(
     onAutoAlign: () -> Unit,
     onSettings: () -> Unit
 ) {
-    val accent = colorForLevel(level)
+    val accent = colorForLevel(level, MaterialTheme.colorScheme.primary)
     val ready = connectionState == LiveConnectionState.READY
     val busy = operation != null || ankleState.operation != AnkleOperation.IDLE
     val canUseConnection = !running || ready
@@ -565,7 +573,12 @@ private fun MainHeader(
         Column(Modifier.weight(1f)) {
             Row {
                 Text("Foot ", color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Black)
-                Text("Battery", color = Accent, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                Text(
+                    "Battery",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Black
+                )
             }
             Text("BLE · 0x180F", color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
         }
@@ -668,7 +681,7 @@ private fun ContextualActionRow(
                 enabled = contextualAction.enabled,
                 modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Accent,
+                    containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = Color(0xFF03140E),
                     disabledContainerColor = Panel,
                     disabledContentColor = Muted
@@ -841,8 +854,9 @@ private fun AnkleAlignmentCard(
                 Image(
                     painter = painterResource(presetDrawableRes(summary)),
                     contentDescription = "${summary.displayName} footwear artwork",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(width = 66.dp, height = 48.dp)
+                    colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.size(width = 72.dp, height = 50.dp)
                 )
                 Spacer(Modifier.width(10.dp))
             }
@@ -861,7 +875,11 @@ private fun AnkleAlignmentCard(
                     } else {
                         presentation.statusText
                     },
-                    color = if (presentation.isCurrentConfirmed) Accent else Muted,
+                    color = if (presentation.isCurrentConfirmed) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        Muted
+                    },
                     fontSize = 12.sp,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -1005,7 +1023,7 @@ private fun AutoAlignmentCardBody(operation: AnkleOperation) {
         verticalArrangement = Arrangement.Center
     ) {
         CircularProgressIndicator(
-            color = Accent,
+            color = MaterialTheme.colorScheme.primary,
             trackColor = RingTrack,
             modifier = Modifier.size(42.dp).semantics {
                 contentDescription = "Automatic alignment in progress"
@@ -1044,9 +1062,10 @@ private fun PresetCell(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val accent = MaterialTheme.colorScheme.primary
     val border = when {
-        physicallyActive -> Accent
-        selectedForSave -> Accent.copy(alpha = 0.75f)
+        physicallyActive -> accent
+        selectedForSave -> accent.copy(alpha = 0.75f)
         else -> Line
     }
     val description = buildString {
@@ -1058,7 +1077,7 @@ private fun PresetCell(
         if (!enabled) append(", unavailable")
     }
     Column(
-        modifier.heightIn(min = 80.dp)
+        modifier.heightIn(min = 86.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(if (physicallyActive) Bg else Panel)
             .border(1.dp, border, RoundedCornerShape(12.dp))
@@ -1081,12 +1100,13 @@ private fun PresetCell(
         Image(
             painter = painterResource(presetDrawableRes(preset)),
             contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxWidth().height(40.dp)
+            colorFilter = ColorFilter.tint(if (physicallyActive) accent else Muted),
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.fillMaxWidth().height(46.dp)
         )
         Text(
             preset.displayName,
-            color = if (physicallyActive) Accent else Ink,
+            color = if (physicallyActive) accent else Ink,
             fontSize = 10.sp,
             fontWeight = if (selectedForSave || physicallyActive) FontWeight.Bold else FontWeight.Normal,
             maxLines = 1,
@@ -1141,7 +1161,11 @@ private fun StatusPill(presentation: MainScreenModePresentation) {
     } else {
         1f
     }
-    val dotColor = if (presentation.usesActiveColor) Accent else Muted
+    val dotColor = if (presentation.usesActiveColor) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        Muted
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier.size(8.dp).clip(CircleShape)
@@ -1223,6 +1247,7 @@ private fun SettingsScreen(
     onPairingCode: (String) -> Unit,
     onBack: () -> Unit
 ) {
+    val accent = MaterialTheme.colorScheme.primary
     Box(Modifier.fillMaxSize().background(Bg).padding(horizontal = 24.dp, vertical = 28.dp)) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
 
@@ -1264,8 +1289,8 @@ private fun SettingsScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedTextColor = Ink, unfocusedTextColor = Ink,
-                    focusedBorderColor = Accent, unfocusedBorderColor = Line,
-                    cursorColor = Accent,
+                    focusedBorderColor = accent, unfocusedBorderColor = Line,
+                    cursorColor = accent,
                     focusedContainerColor = Panel, unfocusedContainerColor = Panel
                 )
             )
@@ -1293,7 +1318,7 @@ private fun SettingsScreen(
                         checked = polling, onCheckedChange = onPolling,
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Color(0xFF03140E),
-                            checkedTrackColor = Accent,
+                            checkedTrackColor = accent,
                             uncheckedThumbColor = Muted,
                             uncheckedTrackColor = Panel,
                             uncheckedBorderColor = Line
@@ -1310,8 +1335,8 @@ private fun SettingsScreen(
                 INTERVALS.forEach { (min, label) ->
                     val selected = intervalMin == min && polling
                     val chipMod = Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
-                        .background(if (selected) Accent else Panel)
-                        .border(1.dp, if (selected) Accent else Line, RoundedCornerShape(12.dp))
+                        .background(if (selected) accent else Panel)
+                        .border(1.dp, if (selected) accent else Line, RoundedCornerShape(12.dp))
                         .let { if (polling) it.clickable { onInterval(min) } else it }
                         .padding(vertical = 14.dp)
                     Box(chipMod, contentAlignment = Alignment.Center) {
@@ -1353,5 +1378,12 @@ private fun StepButton(label: String, onClick: () -> Unit) {
             .background(Bg).border(1.dp, Line, RoundedCornerShape(12.dp))
             .clickable { onClick() },
         contentAlignment = Alignment.Center
-    ) { Text(label, color = Accent, fontSize = 24.sp, fontWeight = FontWeight.Bold) }
+    ) {
+        Text(
+            label,
+            color = MaterialTheme.colorScheme.primary,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
 }

@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <color name="footbattery_green_notification">#16D13A</color>
+    <color name="footbattery_icon_neutral">#BEBFC2</color>
     <color name="notification_preset_outline">#66FFFFFF</color>
     <color name="notification_preset_disabled_outline">#33FFFFFF</color>
 </resources>
