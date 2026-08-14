@@ -1,6 +1,6 @@
-# Foot Battery Monitor
+# FootPilot
 
-An Android app for one configured Össur Proprio Foot. It reads the standard BLE battery
+FootPilot is an Android app for a user-selected Össur Proprio Foot. It reads the standard BLE battery
 level, reports low battery, queries and changes the foot's confirmed standby state, and provides
 foot-authoritative ankle alignment controls. Battery and standby checks are saved as one verified
 snapshot. Ankle position is persisted separately in exact protocol millidegrees with its own
@@ -17,7 +17,10 @@ configured threshold, so they fire once per discharge rather than repeatedly. Ev
 reading drives this safety behavior even if the accompanying standby check fails; an incomplete
 read does not replace the last complete snapshot.
 
-The alert threshold, pairing PIN, polling interval, and polling toggle are available in Settings.
+Foot Setup, alert threshold, pairing PIN, polling interval, and polling toggle are available in
+Settings. FootPilot starts with no selected foot, including after an upgrade from beta2. A foot is
+saved only after an exact-name foreground scan and verification of the expected battery and Össur
+GATT profile; the app never shows a general Bluetooth device list.
 
 ## Getting a runnable app
 
@@ -40,12 +43,14 @@ Pick whichever path fits what you have.
 ## Using it
 
 1. Close any other app connected to the foot — it allows only one connection.
-2. Open the app and grant Bluetooth + Notifications permissions.
-3. Save the pairing PIN in Settings if the foot requires one.
-4. Tap **Check now** for battery, standby, and ankle truth from the foot, or **Start** for live
+2. Open FootPilot and go to Settings.
+3. Save the pairing PIN if the foot requires one, enter its advertised Bluetooth name, and tap
+   **Find foot**. FootPilot saves it only after compatibility verification.
+4. Grant Bluetooth, nearby-device, and notification permissions when Android requests them.
+5. Tap **Check now** for battery, standby, and ankle truth from the foot, or **Start** for live
    monitoring.
-5. Once standby has been checked, use the standby switch in the app or notification.
-6. With freshly confirmed standby OFF, fine-adjust by exactly `-0.1°` or `+0.1°`, save the confirmed
+6. Once standby has been checked, use the standby switch in the app or notification.
+7. With freshly confirmed standby OFF, fine-adjust by exactly `-0.1°` or `+0.1°`, save the confirmed
    angle into one of the four fixed footwear presets, recall a configured preset, or start
    **Auto Alignment**.
 
@@ -72,9 +77,9 @@ store only a user-saved, foot-confirmed exact angle. Selecting an unconfigured p
 the foot. Auto Alignment is event-driven and always finishes with an ankle query; its observed
 status bytes (`00`, `1E`, and `3C`) remain opaque, and Auto never overwrites a preset.
 
-The beta2 UI uses the owner's replacement line-art footwear family. Summary and preset artwork keep
+The beta3 UI uses the owner's replacement line-art footwear family. Summary and preset artwork keep
 their native aspect ratios with Fit rendering, so toes, heels, the boot shaft, and Running speed lines
-remain visible at phone and wide-screen widths. The always-dark app uses the centralized FootBattery
+remain visible at phone and wide-screen widths. The always-dark app uses the centralized FootPilot
 green `#16D13A`; notification accents use the darker `#0B7A1D` on light SystemUI surfaces and
 `#16D13A` in dark mode.
 
@@ -100,14 +105,14 @@ uses notification-aware text appearances for readability in light and dark syste
 API 34 emulator checks cover approximately 360dp and 785dp app widths plus light/dark collapsed and
 expanded notifications. Physical Samsung/One UI verification remains an owner-run beta check.
 
-The physical-validation build identifies itself as `1.2.0-beta2` (`versionCode 3`); the version is
+The physical-validation build identifies itself as `1.2.0-beta3` (`versionCode 4`); the version is
 shown unobtrusively at the bottom of Settings.
 
 ## Make background alerts reliable
 
 Android (especially Samsung/Xiaomi/OnePlus) may kill background Bluetooth to save power,
 which would stop the alerts. To prevent that:
-- Settings → Apps → Foot Battery → Battery → **Unrestricted** (or "Don't optimize").
+- Settings → Apps → FootPilot → Battery → **Unrestricted** (or "Don't optimize").
 
 Scheduled polling is restored by WorkManager. Live monitoring ends with the app process.
 

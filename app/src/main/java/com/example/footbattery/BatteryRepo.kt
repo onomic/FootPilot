@@ -29,10 +29,15 @@ object BatteryRepo {
 
     fun ensureInitialized(ctx: Context) {
         if (!initialized.compareAndSet(false, true)) return
-        val saved = Prefs.snapshot(ctx.applicationContext)
+        val app = ctx.applicationContext
+        val hasSelectedFoot = SelectedFootRepository.current(app) != null
+        val saved = if (hasSelectedFoot) Prefs.snapshot(app) else SnapshotState()
         snapshot.value = saved
         level.value = saved.batteryLevel
-        standbyStatus.value = if (
+        status.value = if (hasSelectedFoot) "Idle" else "Add a foot in Settings"
+        standbyStatus.value = if (!hasSelectedFoot) {
+            ""
+        } else if (
             saved.standby == StandbyState.UNKNOWN &&
             saved.completeness != SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND
         ) {
@@ -40,6 +45,16 @@ object BatteryRepo {
         } else {
             ""
         }
+    }
+
+    fun resetForFootChange(hasSelectedFoot: Boolean) {
+        level.value = null
+        snapshot.value = SnapshotState()
+        status.value = if (hasSelectedFoot) "Idle" else "Add a foot in Settings"
+        standbyStatus.value = if (hasSelectedFoot) "Check now to verify standby" else ""
+        running.value = false
+        connectionState.value = LiveConnectionState.IDLE
+        systemLink.value = ""
     }
 
     fun applySnapshot(value: SnapshotState) {

@@ -5,39 +5,81 @@ import android.content.Context
 /** All persisted settings live here, typed, to avoid stringly-typed mistakes. */
 object Prefs {
     private const val FILE = "foot"
-    private const val SNAPSHOT_BATTERY = "snapshot_battery"
-    private const val SNAPSHOT_STANDBY = "snapshot_standby"
-    private const val LAST_CHECKED = "last_checked"
-    private const val COMPLETE_SNAPSHOT_V1 = "complete_snapshot_v1"
-    private const val SNAPSHOT_COMPLETENESS = "snapshot_completeness"
-    private const val ANKLE_MILLIDEGREES = "ankle_millidegrees"
-    private const val ANKLE_VERIFIED_AT = "ankle_verified_at"
-    private const val ANKLE_CERTAINTY = "ankle_certainty"
-    private const val PRESET_BAREFOOT_MD = "preset_barefoot_md"
-    private const val PRESET_RUNNING_MD = "preset_running_md"
-    private const val PRESET_DRESS_MD = "preset_dress_md"
-    private const val PRESET_BOOTS_MD = "preset_boots_md"
+    private const val SNAPSHOT_BATTERY = FootPreferenceKeys.SNAPSHOT_BATTERY
+    private const val SNAPSHOT_STANDBY = FootPreferenceKeys.SNAPSHOT_STANDBY
+    private const val LAST_CHECKED = FootPreferenceKeys.LAST_CHECKED
+    private const val COMPLETE_SNAPSHOT_V1 = FootPreferenceKeys.COMPLETE_SNAPSHOT_V1
+    private const val SNAPSHOT_COMPLETENESS = FootPreferenceKeys.SNAPSHOT_COMPLETENESS
+    private const val ANKLE_MILLIDEGREES = FootPreferenceKeys.ANKLE_MILLIDEGREES
+    private const val ANKLE_VERIFIED_AT = FootPreferenceKeys.ANKLE_VERIFIED_AT
+    private const val ANKLE_CERTAINTY = FootPreferenceKeys.ANKLE_CERTAINTY
+    private const val PRESET_BAREFOOT_MD = FootPreferenceKeys.PRESET_BAREFOOT_MD
+    private const val PRESET_RUNNING_MD = FootPreferenceKeys.PRESET_RUNNING_MD
+    private const val PRESET_DRESS_MD = FootPreferenceKeys.PRESET_DRESS_MD
+    private const val PRESET_BOOTS_MD = FootPreferenceKeys.PRESET_BOOTS_MD
     private fun p(ctx: Context) = ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
-    fun threshold(ctx: Context): Int = p(ctx).getInt("threshold", FootConfig.DEFAULT_LOW_BATTERY_THRESHOLD)
-    fun setThreshold(ctx: Context, v: Int) = p(ctx).edit().putInt("threshold", v).apply()
+    fun threshold(ctx: Context): Int =
+        p(ctx).getInt(FootPreferenceKeys.THRESHOLD, FootConfig.DEFAULT_LOW_BATTERY_THRESHOLD)
+    fun setThreshold(ctx: Context, v: Int) =
+        p(ctx).edit().putInt(FootPreferenceKeys.THRESHOLD, v).apply()
 
-    fun polling(ctx: Context): Boolean = p(ctx).getBoolean("polling", false)
-    fun setPolling(ctx: Context, v: Boolean) = p(ctx).edit().putBoolean("polling", v).apply()
+    fun polling(ctx: Context): Boolean = p(ctx).getBoolean(FootPreferenceKeys.POLLING, false)
+    fun setPolling(ctx: Context, v: Boolean) =
+        p(ctx).edit().putBoolean(FootPreferenceKeys.POLLING, v).apply()
 
-    fun intervalMin(ctx: Context): Int = p(ctx).getInt("interval_min", 60)
-    fun setIntervalMin(ctx: Context, v: Int) = p(ctx).edit().putInt("interval_min", v).apply()
+    fun intervalMin(ctx: Context): Int = p(ctx).getInt(FootPreferenceKeys.INTERVAL_MIN, 60)
+    fun setIntervalMin(ctx: Context, v: Int) =
+        p(ctx).edit().putInt(FootPreferenceKeys.INTERVAL_MIN, v).apply()
 
-    fun monitoring(ctx: Context): Boolean = p(ctx).getBoolean("monitoring", false)
-    fun setMonitoring(ctx: Context, v: Boolean) = p(ctx).edit().putBoolean("monitoring", v).apply()
+    fun monitoring(ctx: Context): Boolean = p(ctx).getBoolean(FootPreferenceKeys.MONITORING, false)
+    fun setMonitoring(ctx: Context, v: Boolean) =
+        p(ctx).edit().putBoolean(FootPreferenceKeys.MONITORING, v).apply()
 
     // "armed" = ready to fire a low alert. Re-arms once charged back above threshold.
-    fun armed(ctx: Context): Boolean = p(ctx).getBoolean("armed", true)
-    fun setArmed(ctx: Context, v: Boolean) = p(ctx).edit().putBoolean("armed", v).apply()
+    fun armed(ctx: Context): Boolean = p(ctx).getBoolean(FootPreferenceKeys.ARMED, true)
+    fun setArmed(ctx: Context, v: Boolean) =
+        p(ctx).edit().putBoolean(FootPreferenceKeys.ARMED, v).apply()
 
     // Pairing PIN the app auto-submits when the foot asks to bond. Empty = none saved.
-    fun pairingCode(ctx: Context): String = p(ctx).getString("pairing_code", "") ?: ""
-    fun setPairingCode(ctx: Context, v: String) = p(ctx).edit().putString("pairing_code", v.trim()).apply()
+    fun pairingCode(ctx: Context): String =
+        p(ctx).getString(FootPreferenceKeys.PAIRING_CODE, "") ?: ""
+    fun setPairingCode(ctx: Context, v: String) =
+        p(ctx).edit().putString(FootPreferenceKeys.PAIRING_CODE, v.trim()).apply()
+
+    fun selectedFoot(ctx: Context): SelectedFoot? {
+        val prefs = p(ctx)
+        return SelectedFootPersistence.decode(
+            prefs.getString(FootPreferenceKeys.SELECTED_FOOT_NAME, null),
+            prefs.getString(FootPreferenceKeys.SELECTED_FOOT_ADDRESS, null)
+        )
+    }
+
+    /** Selection and all device-specific reset fields are committed as one transaction. */
+    fun replaceSelectedFoot(ctx: Context, selectedFoot: SelectedFoot?): Boolean {
+        val validated = selectedFoot?.let {
+            SelectedFootPersistence.decode(it.name, it.address) ?: return false
+        }
+        val editor = p(ctx).edit()
+        if (validated == null) {
+            editor.remove(FootPreferenceKeys.SELECTED_FOOT_NAME)
+                .remove(FootPreferenceKeys.SELECTED_FOOT_ADDRESS)
+        } else {
+            editor.putString(FootPreferenceKeys.SELECTED_FOOT_NAME, validated.name)
+                .putString(FootPreferenceKeys.SELECTED_FOOT_ADDRESS, validated.address)
+        }
+        val reset = deviceStateResetMutation()
+        reset.removedKeys.forEach { editor.remove(it) }
+        reset.booleanValues.forEach { (key, value) -> editor.putBoolean(key, value) }
+        return editor.commit()
+    }
+
+    fun disableConnectionAutomation(ctx: Context) {
+        p(ctx).edit()
+            .putBoolean(FootPreferenceKeys.POLLING, false)
+            .putBoolean(FootPreferenceKeys.MONITORING, false)
+            .apply()
+    }
 
     /** Last complete battery/time plus standby verification and completeness metadata. */
     fun snapshot(ctx: Context): SnapshotState {

@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Foot Battery</string>
+    <string name="app_name">FootPilot</string>
     <string name="preset_barefoot">Barefoot</string>
     <string name="preset_running">Running</string>
     <string name="preset_dress">Dress</string>

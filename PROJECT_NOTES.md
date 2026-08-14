@@ -1,4 +1,30 @@
-# Foot Battery — Project Notes & Handoff
+# FootPilot — Project Notes & Handoff
+
+> **FootPilot beta3 update:** The visible product name is now FootPilot while the repository,
+> `com.example.footbattery` application ID, namespace, Kotlin packages, and notification action
+> strings remain unchanged for upgrade compatibility. The build is `1.2.0-beta3` (`versionCode 4`).
+> Settings begins with one compact Foot Setup card containing the existing pairing code and an
+> exact-name **Find foot** action. Fresh installs and beta2 upgrades have no selected target; there
+> is no hard-coded or automatic migration of an old device name/address and no Bluetooth results
+> list. A matching advertisement is saved only after the existing `FootGattSession` discovers the
+> Battery Service/Level plus Össur service/AA01/AA02 profile. Verification performs no movement or
+> proprietary command and participates in the process-wide BLE coordinator.
+>
+> Each normal session captures one immutable persisted `SelectedFoot`. Live reconnects retain that
+> target for their generation, temporary operations resolve the current target before connecting,
+> explicit disconnect unbonds only that target, and pairing auto-entry accepts only the selected
+> address or one expiring verification candidate. Find/Remove are unavailable during live,
+> coordinated BLE, or ankle work. A failed search or verification leaves the current selection and
+> its data untouched. Successful replacement/removal atomically clears battery/standby completeness,
+> timestamps, ankle certainty/history, four preset targets, monitoring, polling, and low-alert state
+> while retaining threshold, interval, and pairing code. Polling is disabled and foot notifications
+> are cancelled; removal does not unbond.
+>
+> Main and notification controls fail closed with no selected foot. API 31+ dynamic active/confirmed
+> notification accents now use resource-deferred `RemoteViews.setColor`; API 26–30 resolves the same
+> resource during notification construction. The Ankle Alignment info icon opens one accessible,
+> source-faithful help dialog. All ankle/standby command bytes and safety transactions below remain
+> unchanged.
 
 > **Ankle Alignment v1 update:** This addendum supersedes the standby-only command boundary in the
 > older handoff below without rewriting that historical record. The proprietary AA01 allowlist is
@@ -63,7 +89,7 @@
 > standby actions, and is recoverable with Check now. Live battery refreshes preserve transient
 > operation results until their eight-second expiration.
 
-**Purpose of this document:** complete context for the FootBattery Android app so work can
+**Purpose of this document:** complete context for the FootPilot Android app so work can
 continue in a fresh session without losing decisions or state. Historical sections remain intact;
 the addenda at the top describe the current implementation.
 
@@ -212,7 +238,7 @@ All Kotlin under `app/src/main/java/com/example/footbattery/`:
 - `mipmap-*/ic_launcher*.png` — the **v4 "notification-safe" icon pack** (glowing green prosthetic
   foot on black), all densities, foreground + round foreground.
 - `mipmap-anydpi-v26/ic_launcher.xml` + `ic_launcher_round.xml` — adaptive icon defs incl. `<monochrome>`.
-- `values/strings.xml` (`app_name = "Foot Battery"`), `values/themes.xml` (dark `AppTheme`).
+- `values/strings.xml` (`app_name = "FootPilot"`), `values/themes.xml` (dark `AppTheme`).
 
 **Manifest** highlights:
 - Permissions: `BLUETOOTH_SCAN` (neverForLocation), `BLUETOOTH_CONNECT`, `ACCESS_FINE_LOCATION`
@@ -381,7 +407,7 @@ available in Android's notification framework.
   and `LOW_BATTERY_THRESHOLD` somewhere live (e.g. into `Prefs`/a `Config` object/`Uuids`-style file),
   since other files reference those constants.
 - **Reliability tip for the user:** set the app's battery usage to **Unrestricted**
-  (Settings → Apps → Foot Battery → Battery) so Samsung doesn't kill background polling.
+  (Settings → Apps → FootPilot → Battery) so Samsung doesn't kill background polling.
 - **Known platform constraints to keep in mind:**
   - WorkManager minimum periodic interval is **15 minutes**; "1 hour" is approximate under Doze.
   - `removeBond()` is a **hidden API** — works on this user's Samsung; could be a no-op on other OEM ROMs

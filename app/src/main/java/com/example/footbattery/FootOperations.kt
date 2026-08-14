@@ -62,9 +62,17 @@ object FootOperations {
 
     suspend fun checkNow(ctx: Context, origin: CheckOrigin): FootOperationResult {
         val app = ctx.applicationContext
+        SelectedFootRepository.ensureInitialized(app)
         BatteryRepo.ensureInitialized(app)
         AnkleRepo.ensureInitialized(app)
         PresetRepository.ensureInitialized(app)
+        if (SelectedFootRepository.current(app) == null) {
+            return if (origin == CheckOrigin.SCHEDULED) {
+                FootOperationResult.Skipped
+            } else {
+                operationFailure(app, "No foot selected")
+            }
+        }
         val kind = when {
             origin == CheckOrigin.MANUAL && LiveConnection.isReady() -> BleOperationKind.LIVE_REFRESH
             origin == CheckOrigin.NOTIFICATION -> BleOperationKind.NOTIFICATION_CHECK
@@ -116,8 +124,11 @@ object FootOperations {
 
     suspend fun scheduledCheck(ctx: Context): FootOperationResult {
         val app = ctx.applicationContext
+        SelectedFootRepository.ensureInitialized(app)
         BatteryRepo.ensureInitialized(app)
-        if (!Prefs.polling(app) || !LiveConnection.canUseTemporarySession()) {
+        if (SelectedFootRepository.current(app) == null || !Prefs.polling(app) ||
+            !LiveConnection.canUseTemporarySession()
+        ) {
             return FootOperationResult.Skipped
         }
         return checkNow(app, CheckOrigin.SCHEDULED)
@@ -129,6 +140,7 @@ object FootOperations {
         BatteryRepo.ensureInitialized(app)
         AnkleRepo.ensureInitialized(app)
         PresetRepository.ensureInitialized(app)
+        executionPrerequisiteError(app)?.let { return operationFailure(app, it) }
 
         if (BatteryRepo.snapshot.value.standby == StandbyState.UNKNOWN) {
             val message = if (
@@ -247,6 +259,7 @@ object FootOperations {
         BatteryRepo.ensureInitialized(app)
         AnkleRepo.ensureInitialized(app)
         PresetRepository.ensureInitialized(app)
+        executionPrerequisiteError(app)?.let { return operationFailure(app, it) }
         PresetRepository.select(preset)
         val target = PresetRepository.state.value.targets.target(preset)
             ?: return operationFailure(app, "${preset.displayName} has no saved angle")
@@ -550,7 +563,9 @@ object FootOperations {
         possibleMovement: () -> Boolean = { false },
         block: suspend (FootGattSession) -> FootOperationResult
     ): FootOperationResult {
-        val session = FootGattSession(ctx)
+        val target = SelectedFootRepository.current(ctx)
+            ?: return operationFailure(ctx, "No foot selected")
+        val session = FootGattSession(ctx, target)
         return try {
             val runSession: suspend () -> FootOperationResult = {
                 session.connectAndInitialize()
@@ -585,6 +600,7 @@ object FootOperations {
     }
 
     private fun executionPrerequisiteError(ctx: Context): String? {
+        if (SelectedFootRepository.current(ctx) == null) return "No foot selected"
         val permissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
             ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT) ==
             PackageManager.PERMISSION_GRANTED

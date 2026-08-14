@@ -1,8 +1,12 @@
 package com.example.footbattery
 
-/** Pure UI rule; the click handler repeats the Bluetooth check to close race windows. */
-fun canStartMonitoring(running: Boolean, busy: Boolean, bluetoothAvailable: Boolean): Boolean =
-    !running && !busy && bluetoothAvailable
+/** Pure UI rule; the click handler repeats every prerequisite to close race windows. */
+fun canStartMonitoring(
+    running: Boolean,
+    busy: Boolean,
+    bluetoothAvailable: Boolean,
+    footSelected: Boolean
+): Boolean = !running && !busy && bluetoothAvailable && footSelected
 
 private val BLUETOOTH_UNAVAILABLE_STATUSES = setOf(
     "Turn on Bluetooth",

@@ -11,6 +11,8 @@ enum class BleOperationKind(val statusText: String) {
     SCHEDULED_CHECK("Checking..."),
     MANUAL_CHECK("Checking..."),
     NOTIFICATION_CHECK("Checking..."),
+    FOOT_VERIFICATION("Verifying foot..."),
+    FOOT_SELECTION_CHANGE("Updating foot..."),
     LIVE_CONNECT("Checking..."),
     LIVE_REFRESH("Checking..."),
     STANDBY_ON("Turning standby on..."),

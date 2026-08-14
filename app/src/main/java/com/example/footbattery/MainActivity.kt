@@ -1,9 +1,7 @@
 package com.example.footbattery
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -62,6 +60,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -91,7 +90,10 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private val Bg = Color(0xFF0A0E0D)
 private val Panel = Color(0xFF121817)
@@ -111,28 +113,14 @@ private fun colorForLevel(level: Int?, normal: Color): Color = when {
     else -> normal
 }
 
-/** Reports the foot's actual system-level GATT connection state, for diagnostics. */
-@SuppressLint("MissingPermission")
-private fun systemLinkLabel(ctx: Context): String {
-    return try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT)
-            != PackageManager.PERMISSION_GRANTED
-        ) return ""
-        val bm = ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        val linked = bm.getConnectedDevices(BluetoothProfile.GATT)
-            .any { it.address == FootConfig.TARGET_ADDRESS }
-        val n = BleRegistry.count()
-        (if (linked) "System: foot CONNECTED" else "System: foot not connected") + "  ·  app clients: $n"
-    } catch (e: Exception) { "" }
-}
-
 class MainActivity : ComponentActivity() {
 
     private var threshold by mutableStateOf(25)
     private var polling by mutableStateOf(false)
     private var intervalMin by mutableStateOf(60)
     private var pairingCode by mutableStateOf("")
+    private var footNameInput by mutableStateOf("")
+    private var footSetupFeedback by mutableStateOf<FootSetupFeedback>(FootSetupFeedback.Idle)
     private var showSettings by mutableStateOf(false)
     private var disconnectWarningText by mutableStateOf<String?>(null)
     private var bluetoothAvailable by mutableStateOf(false)
@@ -141,19 +129,45 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { bluetoothAvailable = canUseBluetooth() }
 
+    private var pendingFootSearchName: String? = null
+    private var footSearchJob: Job? = null
+    private var footSearchGeneration = 0
+    private val footScanner by lazy { AndroidFootScanner(applicationContext) }
+    private val footVerifier by lazy { FootCandidateVerifier(applicationContext) }
+
+    private val findPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        val name = pendingFootSearchName
+        pendingFootSearchName = null
+        if (name != null && hasFindPermissions()) {
+            beginFootSearch(name)
+        } else if (name != null) {
+            footSetupFeedback = FootSetupFeedback.Error(
+                "Permission is required to find a foot."
+            )
+        }
+    }
+
     private var pendingCheck = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        SelectedFootRepository.ensureInitialized(this)
         threshold = Prefs.threshold(this)
         polling = Prefs.polling(this)
         intervalMin = Prefs.intervalMin(this)
         pairingCode = Prefs.pairingCode(this)
+        footNameInput = SelectedFootRepository.current(this)?.name.orEmpty()
         BatteryRepo.ensureInitialized(this)
         AnkleRepo.ensureInitialized(this)
         PresetRepository.ensureInitialized(this)
         bluetoothAvailable = canUseBluetooth()
-        if (!bluetoothAvailable) BatteryRepo.status.value = bluetoothUnavailableStatus()
+        if (SelectedFootRepository.current(this) == null) {
+            BatteryRepo.status.value = "Add a foot in Settings"
+        } else if (!bluetoothAvailable) {
+            BatteryRepo.status.value = bluetoothUnavailableStatus()
+        }
         Alerts.ensureChannels(this)
         if (!LiveConnection.isMonitoringRequested()) {
             Alerts.cancelOngoing(this)
@@ -180,6 +194,7 @@ class MainActivity : ComponentActivity() {
                 val coordination by BleOperationCoordinator.state.collectAsState()
                 val ankleState by AnkleRepo.state.collectAsState()
                 val presetState by PresetRepository.state.collectAsState()
+                val selectedFoot by SelectedFootRepository.selected.collectAsState()
                 val latestRunning by rememberUpdatedState(running)
 
                 LaunchedEffect(ankleState.message) {
@@ -196,12 +211,16 @@ class MainActivity : ComponentActivity() {
                     while (true) {
                         val available = canUseBluetooth()
                         bluetoothAvailable = available
-                        val nextStatus = bluetoothAvailabilityStatus(
-                            currentStatus = BatteryRepo.status.value,
-                            bluetoothAvailable = available,
-                            monitoring = latestRunning,
-                            unavailableStatus = bluetoothUnavailableStatus()
-                        )
+                        val nextStatus = if (SelectedFootRepository.selected.value == null) {
+                            "Add a foot in Settings"
+                        } else {
+                            bluetoothAvailabilityStatus(
+                                currentStatus = BatteryRepo.status.value,
+                                bluetoothAvailable = available,
+                                monitoring = latestRunning,
+                                unavailableStatus = bluetoothUnavailableStatus()
+                            )
+                        }
                         if (nextStatus != BatteryRepo.status.value) {
                             BatteryRepo.status.value = nextStatus
                         }
@@ -234,11 +253,23 @@ class MainActivity : ComponentActivity() {
                         polling = polling,
                         intervalMin = intervalMin,
                         pairingCode = pairingCode,
+                        selectedFoot = selectedFoot,
+                        footName = footNameInput,
+                        footSetupFeedback = footSetupFeedback,
+                        footSetupAvailability = footSetupActionAvailability(
+                            monitoringActive = running,
+                            bleOperationActive = coordination.isBusy,
+                            ankleOperationActive = ankleState.operation != AnkleOperation.IDLE,
+                            searching = footSetupFeedback is FootSetupFeedback.Finding
+                        ),
                         onThreshold = { applyThreshold(it) },
                         onPolling = { applyPolling(it) },
                         onInterval = { applyInterval(it) },
                         onPairingCode = { applyPairingCode(it) },
-                        onBack = { showSettings = false }
+                        onFootName = { applyFootNameInput(it) },
+                        onFindFoot = ::requestFindFoot,
+                        onRemoveFoot = ::removeSelectedFoot,
+                        onBack = ::leaveSettings
                     )
                 } else {
                     MainScreen(
@@ -250,6 +281,7 @@ class MainActivity : ComponentActivity() {
                         presetState = presetState,
                         operation = coordination.visibleOperation,
                         bluetoothAvailable = bluetoothAvailable,
+                        selectedFoot = selectedFoot,
                         threshold = threshold,
                         pollingEnabled = polling,
                         onStart = ::startMonitoring,
@@ -260,7 +292,11 @@ class MainActivity : ComponentActivity() {
                         onPreset = ::selectPreset,
                         onSavePreset = ::savePreset,
                         onAutoAlign = ::autoAlign,
-                        onSettings = { showSettings = true }
+                        onSettings = {
+                            cancelFootSearch(clearFeedback = true)
+                            footNameInput = selectedFoot?.name.orEmpty()
+                            showSettings = true
+                        }
                     )
                 }
             }
@@ -274,6 +310,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun applyPolling(on: Boolean) {
+        if (on && SelectedFootRepository.current(this) == null) {
+            polling = false
+            Prefs.setPolling(this, false)
+            BatteryRepo.status.value = "Add a foot in Settings"
+            return
+        }
         polling = on
         Prefs.setPolling(this, on)
         if (on && !hasAll()) permLauncher.launch(neededPerms())
@@ -300,6 +342,106 @@ class MainActivity : ComponentActivity() {
         Prefs.setPairingCode(this, clean)
     }
 
+    private fun applyFootNameInput(value: String) {
+        footNameInput = value.take(64)
+        if (footSetupFeedback is FootSetupFeedback.Error) {
+            footSetupFeedback = FootSetupFeedback.Idle
+        }
+    }
+
+    private fun requestFindFoot() {
+        val name = footNameInput.trim()
+        if (name.isEmpty()) {
+            footSetupFeedback = FootSetupFeedback.Error("Enter a foot name first.")
+            return
+        }
+        if (!SelectedFootRepository.canChangeNow()) {
+            footSetupFeedback = FootSetupFeedback.Error("Disconnect before changing the foot.")
+            return
+        }
+        val missing = neededFindPerms().filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) {
+            pendingFootSearchName = name
+            findPermLauncher.launch(missing.toTypedArray())
+            return
+        }
+        beginFootSearch(name)
+    }
+
+    private fun beginFootSearch(name: String) {
+        cancelFootSearch(clearFeedback = false)
+        val generation = ++footSearchGeneration
+        footSetupFeedback = FootSetupFeedback.Finding(name)
+        footSearchJob = lifecycleScope.launch {
+            val result = FootSetupSearchCoordinator(
+                scanner = footScanner,
+                verifier = footVerifier,
+                committer = SelectedFootCommitter {
+                    SelectedFootRepository.replace(this@MainActivity, it)
+                }
+            ).findAndSelect(name)
+            if (generation != footSearchGeneration) return@launch
+            when (result) {
+                FootSetupSearchResult.EnterName ->
+                    footSetupFeedback = FootSetupFeedback.Error("Enter a foot name first.")
+                is FootSetupSearchResult.Selected -> {
+                    if (result.targetChanged) polling = false
+                    footNameInput = result.foot.name
+                    footSetupFeedback = FootSetupFeedback.Idle
+                }
+                is FootSetupSearchResult.NotFound -> footSetupFeedback = FootSetupFeedback.Error(
+                    "Couldn't find ${result.name}. Check the name and try again."
+                )
+                is FootSetupSearchResult.Incompatible -> footSetupFeedback = FootSetupFeedback.Error(
+                    "${result.name} isn't a compatible foot."
+                )
+                FootSetupSearchResult.BluetoothDisabled -> footSetupFeedback =
+                    FootSetupFeedback.Error("Turn on Bluetooth to find a foot.")
+                FootSetupSearchResult.PermissionMissing -> footSetupFeedback =
+                    FootSetupFeedback.Error("Permission is required to find a foot.")
+                is FootSetupSearchResult.Blocked -> footSetupFeedback =
+                    FootSetupFeedback.Error(result.message)
+                is FootSetupSearchResult.Failed -> footSetupFeedback =
+                    FootSetupFeedback.Error(result.message)
+            }
+            footSearchJob = null
+        }
+    }
+
+    private fun removeSelectedFoot() {
+        cancelFootSearch(clearFeedback = false)
+        lifecycleScope.launch {
+            when (val result = SelectedFootRepository.remove(this@MainActivity)) {
+                is SelectedFootChangeResult.Changed -> {
+                    polling = false
+                    footNameInput = ""
+                    footSetupFeedback = FootSetupFeedback.Idle
+                }
+                SelectedFootChangeResult.Unchanged -> footSetupFeedback = FootSetupFeedback.Idle
+                is SelectedFootChangeResult.Blocked ->
+                    footSetupFeedback = FootSetupFeedback.Error(result.message)
+                is SelectedFootChangeResult.Failed ->
+                    footSetupFeedback = FootSetupFeedback.Error(result.message)
+            }
+        }
+    }
+
+    private fun leaveSettings() {
+        cancelFootSearch(clearFeedback = true)
+        showSettings = false
+    }
+
+    private fun cancelFootSearch(clearFeedback: Boolean) {
+        footSearchGeneration++
+        pendingFootSearchName = null
+        footSearchJob?.cancel()
+        footSearchJob = null
+        footScanner.cancel()
+        if (clearFeedback) footSetupFeedback = FootSetupFeedback.Idle
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -318,7 +460,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         bluetoothAvailable = canUseBluetooth()
-        if (!bluetoothAvailable) BatteryRepo.status.value = bluetoothUnavailableStatus()
+        if (SelectedFootRepository.current(this) == null) {
+            BatteryRepo.status.value = "Add a foot in Settings"
+        } else if (!bluetoothAvailable) {
+            BatteryRepo.status.value = bluetoothUnavailableStatus()
+        }
         if (pendingCheck) {
             pendingCheck = false
             checkNow()
@@ -333,6 +479,17 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
             p += Manifest.permission.POST_NOTIFICATIONS
         return p.toTypedArray()
+    }
+
+    private fun neededFindPerms(): Array<String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+        } else {
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+
+    private fun hasFindPermissions(): Boolean = neededFindPerms().all {
+        ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun hasAll() = neededPerms().all {
@@ -356,6 +513,10 @@ class MainActivity : ComponentActivity() {
 
     // ---- Actions ----
     private fun startMonitoring() {
+        if (SelectedFootRepository.current(this) == null) {
+            BatteryRepo.status.value = "Add a foot in Settings"
+            return
+        }
         if (!hasBluetoothPermission()) {
             BatteryRepo.status.value = "Bluetooth permission is required"
             permLauncher.launch(neededPerms())
@@ -438,6 +599,25 @@ class MainActivity : ComponentActivity() {
         Alerts.ensureChannels(this)
         FootOperations.launchAutoAlign(applicationContext)
     }
+
+    override fun onDestroy() {
+        cancelFootSearch(clearFeedback = false)
+        super.onDestroy()
+    }
+
+    override fun onStop() {
+        // Verification may continue through Android's pairing UI, but an active scan never
+        // remains running after the app leaves the foreground.
+        if (footSearchJob != null && footScanner.cancel()) {
+            footSearchGeneration++
+            footSearchJob?.cancel()
+            footSearchJob = null
+            if (footSetupFeedback is FootSetupFeedback.Finding) {
+                footSetupFeedback = FootSetupFeedback.Idle
+            }
+        }
+        super.onStop()
+    }
 }
 
 // ---------- Main screen ----------
@@ -454,6 +634,7 @@ private fun MainScreen(
     presetState: PresetState,
     operation: BleOperationKind?,
     bluetoothAvailable: Boolean,
+    selectedFoot: SelectedFoot?,
     threshold: Int,
     pollingEnabled: Boolean,
     onStart: () -> Unit,
@@ -470,19 +651,24 @@ private fun MainScreen(
     val ready = connectionState == LiveConnectionState.READY
     val busy = operation != null || ankleState.operation != AnkleOperation.IDLE
     val canUseConnection = !running || ready
+    val hasSelectedFoot = selectedFoot != null
     val modePresentation = mainScreenModePresentation(
         liveReady = ready,
         monitoringActive = running,
-        pollingEnabled = pollingEnabled
+        pollingEnabled = pollingEnabled && hasSelectedFoot
     )
     val display = SnapshotPresentation.create(snapshot)
-    val presentation = MainScreenPresentation.create(
-        activeOperationText = mainScreenOperationText(operation),
-        verificationMessage = ankleState.message ?: display.verificationMessage,
-        standbyStatus = standbyStatus,
-        generalStatus = status
-    )
-    val controlsReady = bluetoothAvailable && !busy && canUseConnection
+    val presentation = if (hasSelectedFoot) {
+        MainScreenPresentation.create(
+            activeOperationText = mainScreenOperationText(operation),
+            verificationMessage = ankleState.message ?: display.verificationMessage,
+            standbyStatus = standbyStatus,
+            generalStatus = status
+        )
+    } else {
+        MainScreenPresentation.create(null, null, null, "Add a foot in Settings")
+    }
+    val controlsReady = hasSelectedFoot && bluetoothAvailable && !busy && canUseConnection
     val anklePresentation = AnklePresentation.create(
         state = ankleState,
         standby = display.standby,
@@ -519,6 +705,7 @@ private fun MainScreen(
                 Spacer(Modifier.height(layout.gaugeToDeviceGapDp.dp))
 
                 DeviceMetadata(
+                    selectedFoot = selectedFoot,
                     threshold = threshold,
                     deviceToThresholdGap = layout.deviceToThresholdGapDp.dp
                 )
@@ -554,6 +741,7 @@ private fun MainScreen(
                 running = running,
                 busy = busy,
                 bluetoothAvailable = bluetoothAvailable,
+                footSelected = hasSelectedFoot,
                 canUseConnection = canUseConnection,
                 gap = layout.actionGapDp.dp,
                 onStart = onStart,
@@ -572,9 +760,9 @@ private fun MainHeader(
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Row {
-                Text("Foot ", color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                Text("Foot", color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Black)
                 Text(
-                    "Battery",
+                    "Pilot",
                     color = MaterialTheme.colorScheme.primary,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Black
@@ -590,6 +778,7 @@ private fun MainHeader(
 
 @Composable
 private fun DeviceMetadata(
+    selectedFoot: SelectedFoot?,
     threshold: Int,
     deviceToThresholdGap: Dp
 ) {
@@ -598,7 +787,7 @@ private fun DeviceMetadata(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = FootConfig.TARGET_NAME,
+            text = selectedFoot?.name ?: "No foot selected",
             color = Ink,
             fontSize = 14.sp,
             fontFamily = FontFamily.Monospace,
@@ -651,13 +840,19 @@ private fun ContextualActionRow(
     running: Boolean,
     busy: Boolean,
     bluetoothAvailable: Boolean,
+    footSelected: Boolean,
     canUseConnection: Boolean,
     gap: Dp,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onCheck: () -> Unit
 ) {
-    val contextualAction = mainScreenContextualAction(running, busy, bluetoothAvailable)
+    val contextualAction = mainScreenContextualAction(
+        running,
+        busy,
+        bluetoothAvailable,
+        footSelected
+    )
     val contextualOnClick = when (contextualAction.type) {
         MainScreenContextualActionType.START -> onStart
         MainScreenContextualActionType.DISCONNECT -> onStop
@@ -666,7 +861,7 @@ private fun ContextualActionRow(
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
         OutlinedButton(
             onClick = onCheck,
-            enabled = bluetoothAvailable && !busy && canUseConnection,
+            enabled = footSelected && bluetoothAvailable && !busy && canUseConnection,
             modifier = Modifier.weight(1f).heightIn(min = 48.dp),
             border = BorderStroke(1.dp, accent),
             colors = ButtonDefaults.outlinedButtonColors(
@@ -790,6 +985,7 @@ private fun AnkleAlignmentCard(
     onAutoAlign: () -> Unit,
     calibration: ShoeHeightCalibration = UnconfiguredShoeHeightCalibration
 ) {
+    var showAnkleInfo by remember { mutableStateOf(false) }
     val autoRunning = state.operation in setOf(
         AnkleOperation.AUTO_STARTING,
         AnkleOperation.AUTO_RUNNING,
@@ -799,6 +995,26 @@ private fun AnkleAlignmentCard(
     val activeMatches = presets.targets.activeMatches(currentConfirmedMd)
     val summary = summaryPreset(presets, currentConfirmedMd) ?: presets.selected
     val presetSelectionReady = state.operation == AnkleOperation.IDLE
+
+    if (showAnkleInfo) {
+        AlertDialog(
+            onDismissRequest = { showAnkleInfo = false },
+            title = { Text("Ankle Alignment") },
+            text = {
+                Text(
+                    "Adjusts the ankle angle for comfortable posture with different heel heights.\n\n" +
+                        "• Sit down before adjusting.\n" +
+                        "• Place the whole foot flat on the floor, heel to toe.\n" +
+                        "• Tap Auto align. Keep the foot flat until the second beep, then lift " +
+                        "the foot to allow the ankle to adapt.\n" +
+                        "• Use Fine Adjust for small manual changes."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showAnkleInfo = false }) { Text("Done") }
+            }
+        )
+    }
 
     Column(
         Modifier.fillMaxWidth()
@@ -831,14 +1047,17 @@ private fun AnkleAlignmentCard(
             ) {
                 Text("Auto align", fontWeight = FontWeight.Bold)
             }
-            Text(
-                "ⓘ",
-                color = Muted,
-                fontSize = 18.sp,
-                modifier = Modifier.semantics {
-                    contentDescription = "Ankle alignment information"
-                }
-            )
+            IconButton(
+                onClick = { showAnkleInfo = true },
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_info_outline),
+                    contentDescription = "About ankle alignment",
+                    tint = Muted,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
 
         if (autoRunning) {
@@ -902,9 +1121,8 @@ private fun AnkleAlignmentCard(
                     configured = configured,
                     selectedForSave = presets.selected == preset,
                     physicallyActive = preset in activeMatches,
-                    enabled = presetSelectionReady && (
-                        !configured || presentation.movementEnabled && interactionReady
-                    ),
+                    enabled = interactionReady && presetSelectionReady &&
+                        (!configured || presentation.movementEnabled),
                     onClick = { onPreset(preset) },
                     modifier = Modifier.weight(1f)
                 )
@@ -1243,11 +1461,25 @@ private fun BatteryGauge(
 @Composable
 private fun SettingsScreen(
     threshold: Int, polling: Boolean, intervalMin: Int, pairingCode: String,
+    selectedFoot: SelectedFoot?,
+    footName: String,
+    footSetupFeedback: FootSetupFeedback,
+    footSetupAvailability: FootSetupActionAvailability,
     onThreshold: (Int) -> Unit, onPolling: (Boolean) -> Unit, onInterval: (Int) -> Unit,
     onPairingCode: (String) -> Unit,
+    onFootName: (String) -> Unit,
+    onFindFoot: () -> Unit,
+    onRemoveFoot: () -> Unit,
     onBack: () -> Unit
 ) {
     val accent = MaterialTheme.colorScheme.primary
+    val finding = footSetupFeedback is FootSetupFeedback.Finding
+    val setupStatus = footSetupStatusPresentation(selectedFoot, footSetupFeedback)
+    val setupStatusColor = when (setupStatus.tone) {
+        FootSetupStatusTone.MUTED -> Muted
+        FootSetupStatusTone.SUCCESS -> accent
+        FootSetupStatusTone.WARNING -> Warn
+    }
     Box(Modifier.fillMaxSize().background(Bg).padding(horizontal = 24.dp, vertical = 28.dp)) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
 
@@ -1258,6 +1490,120 @@ private fun SettingsScreen(
             }
 
             Spacer(Modifier.height(24.dp))
+
+            Text("FOOT SETUP", color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            Spacer(Modifier.height(10.dp))
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Panel)
+                    .border(1.dp, Line, RoundedCornerShape(14.dp)).padding(16.dp)
+            ) {
+                Text("Pairing code", color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = pairingCode,
+                    onValueChange = onPairingCode,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                    singleLine = true,
+                    placeholder = { Text("Pairing code", color = Muted) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Ink,
+                        unfocusedTextColor = Ink,
+                        focusedBorderColor = accent,
+                        unfocusedBorderColor = Line,
+                        cursorColor = accent,
+                        focusedContainerColor = Panel,
+                        unfocusedContainerColor = Panel
+                    )
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Used automatically when the foot asks to pair. Leave blank if no code is needed.",
+                    color = Muted,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp
+                )
+
+                Spacer(Modifier.height(16.dp))
+                Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+                Spacer(Modifier.height(16.dp))
+
+                Text("Bluetooth foot", color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = footName,
+                    onValueChange = onFootName,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                    singleLine = true,
+                    enabled = footSetupAvailability.canChange,
+                    placeholder = { Text("Foot name", color = Muted) },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Ink,
+                        unfocusedTextColor = Ink,
+                        disabledTextColor = Muted,
+                        focusedBorderColor = accent,
+                        unfocusedBorderColor = Line,
+                        disabledBorderColor = Line.copy(alpha = 0.65f),
+                        cursorColor = accent,
+                        focusedContainerColor = Panel,
+                        unfocusedContainerColor = Panel,
+                        disabledContainerColor = Panel
+                    )
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    footSetupAvailability.helperText,
+                    color = Muted,
+                    fontSize = 11.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = onFindFoot,
+                    enabled = footSetupAvailability.canChange,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    border = BorderStroke(1.dp, if (footSetupAvailability.canChange) accent else Line),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = accent,
+                        disabledContentColor = Muted
+                    )
+                ) {
+                    if (finding) {
+                        CircularProgressIndicator(
+                            color = Muted,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (finding) "Finding…" else "Find foot", fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 36.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        setupStatus.text,
+                        color = setupStatusColor,
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (setupStatus.showRemove) {
+                        TextButton(
+                            onClick = onRemoveFoot,
+                            enabled = footSetupAvailability.canChange,
+                            modifier = Modifier.heightIn(min = 44.dp)
+                        ) {
+                            Text("Remove", color = if (footSetupAvailability.canChange) Muted else Line)
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(28.dp))
 
             Text("ALERT THRESHOLD", color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
             Spacer(Modifier.height(10.dp))
@@ -1275,31 +1621,6 @@ private fun SettingsScreen(
                     StepButton("+") { onThreshold(threshold + 5) }
                 }
             }
-
-            Spacer(Modifier.height(28.dp))
-
-            Text("PAIRING CODE", color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-            Spacer(Modifier.height(10.dp))
-            OutlinedTextField(
-                value = pairingCode,
-                onValueChange = onPairingCode,
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = { Text("6-digit PIN", color = Muted) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Ink, unfocusedTextColor = Ink,
-                    focusedBorderColor = accent, unfocusedBorderColor = Line,
-                    cursorColor = accent,
-                    focusedContainerColor = Panel, unfocusedContainerColor = Panel
-                )
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "Saved and entered automatically when the foot asks to pair, so you don't have to type it on each reconnect. Leave blank if no code is needed.",
-                color = Muted, fontSize = 12.sp
-            )
-
             Spacer(Modifier.height(28.dp))
 
             Text("BACKGROUND POLLING", color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
@@ -1315,7 +1636,9 @@ private fun SettingsScreen(
                             color = Muted, fontSize = 12.sp)
                     }
                     Switch(
-                        checked = polling, onCheckedChange = onPolling,
+                        checked = polling,
+                        onCheckedChange = onPolling,
+                        enabled = selectedFoot != null,
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Color(0xFF03140E),
                             checkedTrackColor = accent,
@@ -1333,17 +1656,18 @@ private fun SettingsScreen(
             Spacer(Modifier.height(10.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 INTERVALS.forEach { (min, label) ->
-                    val selected = intervalMin == min && polling
+                    val intervalsEnabled = polling && selectedFoot != null
+                    val selected = intervalMin == min && intervalsEnabled
                     val chipMod = Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
                         .background(if (selected) accent else Panel)
                         .border(1.dp, if (selected) accent else Line, RoundedCornerShape(12.dp))
-                        .let { if (polling) it.clickable { onInterval(min) } else it }
+                        .let { if (intervalsEnabled) it.clickable { onInterval(min) } else it }
                         .padding(vertical = 14.dp)
                     Box(chipMod, contentAlignment = Alignment.Center) {
                         Text(
                             label,
                             color = when {
-                                !polling -> Muted.copy(alpha = 0.5f)
+                                !intervalsEnabled -> Muted.copy(alpha = 0.5f)
                                 selected -> Color(0xFF03140E)
                                 else -> Ink
                             },

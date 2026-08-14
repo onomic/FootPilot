@@ -24,7 +24,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 
-class BleSessionException(message: String, cause: Throwable? = null) : Exception(message, cause)
+open class BleSessionException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 data class FullSnapshotRead(
     val batteryLevel: Int?,
@@ -42,6 +42,7 @@ data class FullSnapshotRead(
  */
 class FootGattSession(
     context: Context,
+    val target: SelectedFoot,
     private val onBatteryNotification: (Int) -> Unit = {},
     private val onUnexpectedDisconnect: (String) -> Unit = {}
 ) {
@@ -84,14 +85,24 @@ class FootGattSession(
 
     fun isUsable(): Boolean = initialized && !closing.get() && !poisoned.get() && gatt != null
 
+    suspend fun connectAndInitialize(onProgress: (LiveConnectionState) -> Unit = {}) =
+        connectAndResolveProfile(initializeNotifications = true, onProgress = onProgress)
+
+    /** Setup-only compatibility check: service discovery and profile validation, with no command. */
+    suspend fun connectAndVerifyProfile() =
+        connectAndResolveProfile(initializeNotifications = false, onProgress = {})
+
     @SuppressLint("MissingPermission")
-    suspend fun connectAndInitialize(onProgress: (LiveConnectionState) -> Unit = {}) {
+    private suspend fun connectAndResolveProfile(
+        initializeNotifications: Boolean,
+        onProgress: (LiveConnectionState) -> Unit
+    ) {
         checkConnectPermission()
         val manager = appContext.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val adapter = manager.adapter ?: throw BleSessionException("Bluetooth is unavailable")
         if (!adapter.isEnabled) throw BleSessionException("Turn on Bluetooth")
         val device = try {
-            adapter.getRemoteDevice(FootConfig.TARGET_ADDRESS)
+            adapter.getRemoteDevice(target.address)
         } catch (e: Exception) {
             throw BleSessionException("The saved foot address is invalid", e)
         }
@@ -115,9 +126,11 @@ class FootGattSession(
                 servicesDiscovered.await()
                 resolveCharacteristics(client)
 
-                onProgress(LiveConnectionState.INITIALIZING)
-                enableNotifications(requireNotNull(aa01Characteristic) { "AA01 not resolved" })
-                enableNotifications(requireNotNull(aa02Characteristic) { "AA02 not resolved" })
+                if (initializeNotifications) {
+                    onProgress(LiveConnectionState.INITIALIZING)
+                    enableNotifications(requireNotNull(aa01Characteristic) { "AA01 not resolved" })
+                    enableNotifications(requireNotNull(aa02Characteristic) { "AA02 not resolved" })
+                }
                 initialized = true
             }
         } catch (e: TimeoutCancellationException) {
@@ -260,7 +273,7 @@ class FootGattSession(
             try { client.close() } catch (_: Exception) {}
             BleRegistry.remove(client)
         }
-        if (removeBond) BondHelper.forceUnbond(appContext)
+        if (removeBond) BondHelper.forceUnbond(appContext, target)
     }
 
     private fun checkConnectPermission() {
@@ -273,14 +286,24 @@ class FootGattSession(
     }
 
     private fun resolveCharacteristics(client: BluetoothGatt) {
-        batteryCharacteristic = client.getService(Uuids.SERVICE)?.getCharacteristic(Uuids.LEVEL)
-            ?: throw BleSessionException("Battery service was not found")
-        val ossur = client.getService(Uuids.OSSUR_SERVICE)
-            ?: throw BleSessionException("Össur standby service was not found")
-        aa01Characteristic = ossur.getCharacteristic(Uuids.AA01)
-            ?: throw BleSessionException("Össur command characteristic AA01 was not found")
-        aa02Characteristic = ossur.getCharacteristic(Uuids.AA02)
-            ?: throw BleSessionException("Össur streaming characteristic AA02 was not found")
+        val batteryService = client.getService(Uuids.SERVICE)
+        val batteryLevel = batteryService?.getCharacteristic(Uuids.LEVEL)
+        val ossurService = client.getService(Uuids.OSSUR_SERVICE)
+        val aa01 = ossurService?.getCharacteristic(Uuids.AA01)
+        val aa02 = ossurService?.getCharacteristic(Uuids.AA02)
+        val profile = FootGattProfilePresence(
+            batteryService = batteryService != null,
+            batteryLevel = batteryLevel != null,
+            ossurService = ossurService != null,
+            aa01 = aa01 != null,
+            aa02 = aa02 != null
+        )
+        if (!isCompatibleFootProfile(profile)) {
+            throw IncompatibleFootException("Required foot profile was not found")
+        }
+        batteryCharacteristic = requireNotNull(batteryLevel)
+        aa01Characteristic = requireNotNull(aa01)
+        aa02Characteristic = requireNotNull(aa02)
     }
 
     @SuppressLint("MissingPermission")

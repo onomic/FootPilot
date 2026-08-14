@@ -16,11 +16,11 @@ import android.content.Context
  */
 object BondHelper {
     @SuppressLint("MissingPermission")
-    fun forceUnbond(ctx: Context) {
+    fun forceUnbond(ctx: Context, target: SelectedFoot) {
         try {
             val adapter = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
                 ?: return
-            val device: BluetoothDevice = adapter.getRemoteDevice(FootConfig.TARGET_ADDRESS)
+            val device: BluetoothDevice = adapter.getRemoteDevice(target.address)
             val m = device.javaClass.getMethod("removeBond")
             m.invoke(device)
         } catch (_: Exception) {

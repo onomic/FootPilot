@@ -22,6 +22,7 @@ object LiveConnection {
     @Volatile private var appContext: Context? = null
     @Volatile private var wantConnected = false
     @Volatile private var session: FootGattSession? = null
+    @Volatile private var activeTarget: SelectedFoot? = null
     @Volatile private var hasBeenReady = false
     private var connectJob: Job? = null
 
@@ -29,7 +30,7 @@ object LiveConnection {
 
     /** Temporary clients are safe only after the live owner has completely released its GATT. */
     fun canUseTemporarySession(): Boolean =
-        !wantConnected && session == null &&
+        SelectedFootRepository.selected.value != null && !wantConnected && session == null &&
             BatteryRepo.connectionState.value == LiveConnectionState.IDLE &&
             !BatteryRepo.running.value
 
@@ -44,12 +45,20 @@ object LiveConnection {
 
     fun start(ctx: Context) {
         val app = ctx.applicationContext
+        SelectedFootRepository.ensureInitialized(app)
         BatteryRepo.ensureInitialized(app)
         AnkleRepo.ensureInitialized(app)
         PresetRepository.ensureInitialized(app)
         if (wantConnected) return
+        val target = SelectedFootRepository.current(app)
+        if (target == null) {
+            BatteryRepo.status.value = "Add a foot in Settings"
+            Prefs.setMonitoring(app, false)
+            return
+        }
 
         appContext = app
+        activeTarget = target
         wantConnected = true
         hasBeenReady = false
         val expectedGeneration = generation.incrementAndGet()
@@ -60,10 +69,10 @@ object LiveConnection {
         Alerts.ensureChannels(app)
         Alerts.cancelPollStatus(app)
         Alerts.postOngoing(app, "Connecting...")
-        launchConnectLoop(expectedGeneration)
+        launchConnectLoop(expectedGeneration, target)
     }
 
-    private fun launchConnectLoop(expectedGeneration: Int) {
+    private fun launchConnectLoop(expectedGeneration: Int, target: SelectedFoot) {
         synchronized(jobGuard) {
             if (connectJob?.isActive == true) return
             connectJob = scope.launch {
@@ -77,9 +86,15 @@ object LiveConnection {
                             lateinit var created: FootGattSession
                             created = FootGattSession(
                                 requireNotNull(appContext),
+                                target,
                                 onBatteryNotification = { level -> handleLiveBattery(created, level) },
                                 onUnexpectedDisconnect = { message ->
-                                    handleUnexpectedDisconnect(created, message, expectedGeneration)
+                                    handleUnexpectedDisconnect(
+                                        created,
+                                        message,
+                                        expectedGeneration,
+                                        target
+                                    )
                                 }
                             )
                             candidate = created
@@ -175,15 +190,18 @@ object LiveConnection {
     private fun handleUnexpectedDisconnect(
         owner: FootGattSession,
         message: String,
-        expectedGeneration: Int
+        expectedGeneration: Int,
+        target: SelectedFoot
     ) {
-        if (session !== owner || !wantConnected || generation.get() != expectedGeneration) return
+        if (session !== owner || !wantConnected || generation.get() != expectedGeneration ||
+            activeTarget != target
+        ) return
         session = null
         owner.disconnectAndClose(removeBond = false)
         BatteryRepo.connectionState.value = LiveConnectionState.FAILED
         BatteryRepo.status.value = "$message — reconnecting"
         appContext?.let { Alerts.postOngoing(it, BatteryRepo.status.value) }
-        launchConnectLoop(expectedGeneration)
+        launchConnectLoop(expectedGeneration, target)
     }
 
     fun stop() {
@@ -198,6 +216,7 @@ object LiveConnection {
         Alerts.postOngoing(app, "Disconnecting...")
 
         val job = synchronized(jobGuard) { connectJob.also { connectJob = null } }
+        val target = activeTarget
         scope.launch {
             job?.cancelAndJoin()
             BleOperationCoordinator.runQueued(BleOperationKind.DISCONNECT) {
@@ -207,8 +226,9 @@ object LiveConnection {
                 delay(600L)
                 current?.disconnectAndClose(removeBond = false)
                 BleRegistry.closeAll()
-                BondHelper.forceUnbond(app)
+                target?.let { BondHelper.forceUnbond(app, it) }
             }
+            activeTarget = null
             BatteryRepo.running.value = false
             BatteryRepo.connectionState.value = LiveConnectionState.IDLE
             BatteryRepo.status.value = "Disconnected"

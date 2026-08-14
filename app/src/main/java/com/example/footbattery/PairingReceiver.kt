@@ -8,8 +8,8 @@ import android.content.Intent
 
 /**
  * Auto-answers the system's BLE pairing request with the PIN saved in Settings, so the
- * user doesn't have to type it on every reconnect. Only acts for our target foot and only
- * if a code has been saved; otherwise it stays out of the way and Android shows its dialog.
+ * user doesn't have to type it on every reconnect. It acts only for the selected foot or the
+ * one short-lived candidate being verified; otherwise Android keeps control of the request.
  */
 class PairingReceiver : BroadcastReceiver() {
     @SuppressLint("MissingPermission")
@@ -22,8 +22,13 @@ class PairingReceiver : BroadcastReceiver() {
             else
                 @Suppress("DEPRECATION") intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
 
-        // Only handle our foot.
-        if (device == null || device.address != FootConfig.TARGET_ADDRESS) return
+        if (device == null) return
+        val address = try {
+            device.address
+        } catch (_: Exception) {
+            return
+        }
+        if (!PairingTargetPolicy.allows(context, address)) return
 
         val code = Prefs.pairingCode(context)
         if (code.isEmpty()) return  // nothing saved -> let Android prompt normally

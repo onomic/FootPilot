@@ -260,7 +260,8 @@ class MainScreenPresentationTest {
         val action = mainScreenContextualAction(
             running = false,
             busy = false,
-            bluetoothAvailable = true
+            bluetoothAvailable = true,
+            footSelected = true
         )
 
         assertEquals(MainScreenContextualActionType.START, action.type)
@@ -272,7 +273,8 @@ class MainScreenPresentationTest {
         val action = mainScreenContextualAction(
             running = true,
             busy = false,
-            bluetoothAvailable = true
+            bluetoothAvailable = true,
+            footSelected = true
         )
 
         assertEquals(MainScreenContextualActionType.DISCONNECT, action.type)
@@ -281,9 +283,10 @@ class MainScreenPresentationTest {
     }
 
     @Test fun contextualActionPreservesExistingEnablementRules() {
-        assertFalse(mainScreenContextualAction(false, busy = true, bluetoothAvailable = true).enabled)
-        assertFalse(mainScreenContextualAction(false, busy = false, bluetoothAvailable = false).enabled)
-        assertFalse(mainScreenContextualAction(true, busy = true, bluetoothAvailable = true).enabled)
-        assertTrue(mainScreenContextualAction(true, busy = false, bluetoothAvailable = false).enabled)
+        assertFalse(mainScreenContextualAction(false, true, true, footSelected = true).enabled)
+        assertFalse(mainScreenContextualAction(false, false, false, footSelected = true).enabled)
+        assertFalse(mainScreenContextualAction(true, true, true, footSelected = true).enabled)
+        assertTrue(mainScreenContextualAction(true, false, false, footSelected = true).enabled)
+        assertFalse(mainScreenContextualAction(false, false, true, footSelected = false).enabled)
     }
 }

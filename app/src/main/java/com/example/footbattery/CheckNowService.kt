@@ -38,6 +38,11 @@ class CheckNowService : Service() {
         }
 
         val ctx = applicationContext
+        SelectedFootRepository.ensureInitialized(ctx)
+        if (SelectedFootRepository.current(ctx) == null) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         BatteryRepo.ensureInitialized(ctx)
         AnkleRepo.ensureInitialized(ctx)
         PresetRepository.ensureInitialized(ctx)

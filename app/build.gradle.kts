@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.footbattery"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.2.0-beta2"
+        versionCode = 4
+        versionName = "1.2.0-beta3"
     }
 
     buildTypes {

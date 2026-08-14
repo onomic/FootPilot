@@ -7,10 +7,11 @@ import org.junit.Test
 
 class MonitoringStartRuleTest {
     @Test fun startRequiresBluetoothAndAnIdleStoppedOwner() {
-        assertTrue(canStartMonitoring(running = false, busy = false, bluetoothAvailable = true))
-        assertFalse(canStartMonitoring(running = false, busy = false, bluetoothAvailable = false))
-        assertFalse(canStartMonitoring(running = true, busy = false, bluetoothAvailable = true))
-        assertFalse(canStartMonitoring(running = false, busy = true, bluetoothAvailable = true))
+        assertTrue(canStartMonitoring(false, false, bluetoothAvailable = true, footSelected = true))
+        assertFalse(canStartMonitoring(false, false, bluetoothAvailable = false, footSelected = true))
+        assertFalse(canStartMonitoring(true, false, bluetoothAvailable = true, footSelected = true))
+        assertFalse(canStartMonitoring(false, true, bluetoothAvailable = true, footSelected = true))
+        assertFalse(canStartMonitoring(false, false, bluetoothAvailable = true, footSelected = false))
     }
 
     @Test fun unavailableWhileIdleShowsUnavailableStatus() {

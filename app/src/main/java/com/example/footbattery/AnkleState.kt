@@ -89,7 +89,16 @@ object AnkleRepo {
 
     fun ensureInitialized(ctx: Context) {
         if (!initialized.compareAndSet(false, true)) return
-        state.value = AnklePersistence.restoreForProcess(Prefs.ankleState(ctx.applicationContext))
+        val app = ctx.applicationContext
+        state.value = if (SelectedFootRepository.current(app) == null) {
+            AnkleState()
+        } else {
+            AnklePersistence.restoreForProcess(Prefs.ankleState(app))
+        }
+    }
+
+    fun resetForFootChange() {
+        state.value = AnkleState()
     }
 
     fun begin(operation: AnkleOperation, message: String) {

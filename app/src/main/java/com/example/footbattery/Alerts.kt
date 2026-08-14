@@ -16,8 +16,18 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.View
 import android.widget.RemoteViews
+import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+
+enum class RemoteColorApplication { RESOURCE_DEFERRED, RESOLVED_FALLBACK }
+
+fun notificationColorApplication(apiLevel: Int): RemoteColorApplication =
+    if (apiLevel >= Build.VERSION_CODES.S) {
+        RemoteColorApplication.RESOURCE_DEFERRED
+    } else {
+        RemoteColorApplication.RESOLVED_FALLBACK
+    }
 
 /** Centralized verified-snapshot notifications and low-battery alerts. */
 object Alerts {
@@ -79,6 +89,11 @@ object Alerts {
 
     /** Persistent status notification while polling is enabled and live monitoring is off. */
     fun updatePollStatus(ctx: Context) {
+        SelectedFootRepository.ensureInitialized(ctx)
+        if (SelectedFootRepository.current(ctx) == null) {
+            cancelPollStatus(ctx)
+            return
+        }
         BatteryRepo.ensureInitialized(ctx)
         AnkleRepo.ensureInitialized(ctx)
         PresetRepository.ensureInitialized(ctx)
@@ -94,6 +109,14 @@ object Alerts {
 
     fun cancelPollStatus(ctx: Context) {
         ctx.getSystemService(NotificationManager::class.java).cancel(POLL_STATUS_ID)
+    }
+
+    fun cancelFootSpecificNotifications(ctx: Context) {
+        ctx.getSystemService(NotificationManager::class.java).apply {
+            cancel(ONGOING_ID)
+            cancel(POLL_STATUS_ID)
+            cancel(ALERT_ID)
+        }
     }
 
     /** Immediately replaces any applicable persistent notification and suppresses actions. */
@@ -279,14 +302,18 @@ object Alerts {
         presets: PresetState,
         includeActions: Boolean
     ): RemoteViews = RemoteViews(ctx.packageName, R.layout.notification_state_expanded).apply {
-        val brandGreen = ContextCompat.getColor(ctx, R.color.footbattery_green_notification)
         val neutralIcon = ContextCompat.getColor(ctx, R.color.footbattery_icon_neutral)
         setTextViewText(R.id.notification_expanded_battery_label, content.batteryLabel)
         setTextViewText(R.id.notification_expanded_battery_value, content.batteryValue)
         setTextViewText(R.id.notification_expanded_standby, content.standbyText)
         setTextViewText(R.id.notification_angle_text, content.angleStatusText)
         if (content.angleStatusConfirmed) {
-            setTextColor(R.id.notification_angle_text, brandGreen)
+            setAdaptiveColorResource(
+                ctx,
+                R.id.notification_angle_text,
+                "setTextColor",
+                R.color.footbattery_green_notification
+            )
         }
         val summary = content.summaryPreset
         if (summary == null) {
@@ -296,11 +323,16 @@ object Alerts {
             setViewVisibility(R.id.notification_summary_image, View.VISIBLE)
             setViewVisibility(R.id.notification_summary_name, View.VISIBLE)
             setImageViewResource(R.id.notification_summary_image, presetDrawable(summary))
-            setInt(
-                R.id.notification_summary_image,
-                "setColorFilter",
-                if (content.angleStatusConfirmed) brandGreen else neutralIcon
-            )
+            if (content.angleStatusConfirmed) {
+                setAdaptiveColorResource(
+                    ctx,
+                    R.id.notification_summary_image,
+                    "setColorFilter",
+                    R.color.footbattery_green_notification
+                )
+            } else {
+                setInt(R.id.notification_summary_image, "setColorFilter", neutralIcon)
+            }
             setTextViewText(R.id.notification_summary_name, content.summaryPresetName)
         }
         val operation = content.operationText
@@ -332,13 +364,23 @@ object Alerts {
             setFloat(presetCellId(preset), "setAlpha", presetPresentation.cellAlpha)
             setTextViewText(presetLabelId(preset), presetPresentation.label)
             if (active) {
-                setTextColor(presetLabelId(preset), brandGreen)
+                setAdaptiveColorResource(
+                    ctx,
+                    presetLabelId(preset),
+                    "setTextColor",
+                    R.color.footbattery_green_notification
+                )
             }
-            setInt(
-                presetImageId(preset),
-                "setColorFilter",
-                if (active) brandGreen else neutralIcon
-            )
+            if (active) {
+                setAdaptiveColorResource(
+                    ctx,
+                    presetImageId(preset),
+                    "setColorFilter",
+                    R.color.footbattery_green_notification
+                )
+            } else {
+                setInt(presetImageId(preset), "setColorFilter", neutralIcon)
+            }
             setInt(presetImageId(preset), "setImageAlpha", presetPresentation.imageAlpha)
             if (presetPresentation.visualState in setOf(
                     NotificationPresetVisualState.ACTIVE_ACTIONABLE,
@@ -413,8 +455,31 @@ object Alerts {
     private fun pendingIntentFlags(): Int =
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
 
+    private fun RemoteViews.setAdaptiveColorResource(
+        ctx: Context,
+        viewId: Int,
+        methodName: String,
+        colorResource: Int
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            setDeferredColorResource(viewId, methodName, colorResource)
+        } else {
+            setInt(viewId, methodName, ContextCompat.getColor(ctx, colorResource))
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun RemoteViews.setDeferredColorResource(
+        viewId: Int,
+        methodName: String,
+        colorResource: Int
+    ) {
+        setColor(viewId, methodName, colorResource)
+    }
+
     @SuppressLint("MissingPermission")
     private fun actionsAreSafe(ctx: Context): Boolean {
+        if (SelectedFootRepository.current(ctx) == null) return false
         val permissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
             ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT) ==
             PackageManager.PERMISSION_GRANTED

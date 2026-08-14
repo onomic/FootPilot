@@ -182,6 +182,8 @@ fun mainScreenOperationText(operation: BleOperationKind?): String? = when (opera
     BleOperationKind.SCHEDULED_CHECK,
     BleOperationKind.LIVE_CONNECT,
     BleOperationKind.LIVE_REFRESH -> "Checking standby..."
+    BleOperationKind.FOOT_VERIFICATION -> "Verifying foot..."
+    BleOperationKind.FOOT_SELECTION_CHANGE -> "Updating foot..."
     BleOperationKind.STANDBY_ON -> "Turning standby on..."
     BleOperationKind.STANDBY_OFF -> "Turning standby off..."
     BleOperationKind.STANDBY_TOGGLE -> "Updating standby..."
@@ -207,7 +209,8 @@ data class MainScreenContextualAction(
 fun mainScreenContextualAction(
     running: Boolean,
     busy: Boolean,
-    bluetoothAvailable: Boolean
+    bluetoothAvailable: Boolean,
+    footSelected: Boolean
 ): MainScreenContextualAction = if (running) {
     MainScreenContextualAction(
         type = MainScreenContextualActionType.DISCONNECT,
@@ -218,7 +221,7 @@ fun mainScreenContextualAction(
     MainScreenContextualAction(
         type = MainScreenContextualActionType.START,
         label = "Start",
-        enabled = canStartMonitoring(running, busy, bluetoothAvailable)
+        enabled = canStartMonitoring(running, busy, bluetoothAvailable, footSelected)
     )
 }
 

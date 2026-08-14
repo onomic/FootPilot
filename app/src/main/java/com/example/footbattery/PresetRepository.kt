@@ -58,7 +58,16 @@ object PresetRepository {
 
     fun ensureInitialized(ctx: Context) {
         if (!initialized.compareAndSet(false, true)) return
-        state.value = PresetState(targets = Prefs.presetTargets(ctx.applicationContext))
+        val app = ctx.applicationContext
+        state.value = if (SelectedFootRepository.current(app) == null) {
+            PresetState()
+        } else {
+            PresetState(targets = Prefs.presetTargets(app))
+        }
+    }
+
+    fun resetForFootChange() {
+        state.value = PresetState()
     }
 
     fun select(preset: FootwearPreset) {
