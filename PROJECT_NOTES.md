@@ -1,5 +1,20 @@
 # FootPilot — Project Notes & Handoff
 
+> **FootPilot controls UX update:** **Check now** is the one full-width primary main-screen action.
+> The former Start/Disconnect bottom action is now a state-derived **Stay connected** switch in a
+> compact **FOOT CONTROLS** card beside the existing confirmation-driven Standby switch. Turning it
+> on reuses `LiveConnection.start()`; turning it off still uses the guarded activity stop path and
+> its standby warning before `LiveConnection.stop()`. The switch stays available as an escape from
+> retry or Bluetooth loss when no protected operation is active, and shows off/disabled while the
+> existing connection state is `DISCONNECTING`.
+>
+> The passive header now reports `CONNECTED`, `CONNECTING`, `DISCONNECTING`, `POLLING`, or `IDLE`;
+> connected/connecting retain the established pulse. Snapshot-derived checked-time wording moved
+> below the alert threshold, including incomplete and never-checked states. Settings now includes a
+> noninteractive **FOOT MODES** card where Chair Exit Mode and Relax Mode are visual `Disabled`
+> placeholders only. Background polling and notification actions remain separate and unchanged.
+> This update adds no BLE command, preference, service, session owner, or protocol behavior.
+
 > **FootPilot beta3 update:** The visible product name is now FootPilot while the repository,
 > `com.example.footbattery` application ID, namespace, Kotlin packages, and notification action
 > strings remain unchanged for upgrade compatibility. The build is `1.2.0-beta3` (`versionCode 4`).

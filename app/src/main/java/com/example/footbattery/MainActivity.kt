@@ -89,6 +89,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Job
@@ -284,8 +285,9 @@ class MainActivity : ComponentActivity() {
                         selectedFoot = selectedFoot,
                         threshold = threshold,
                         pollingEnabled = polling,
-                        onStart = ::startMonitoring,
-                        onStop = ::requestStopMonitoring,
+                        onStayConnectedChange = { stayConnected ->
+                            if (stayConnected) startMonitoring() else requestStopMonitoring()
+                        },
                         onCheck = ::checkNow,
                         onStandby = ::changeStandby,
                         onFineAdjust = ::fineAdjust,
@@ -637,8 +639,7 @@ private fun MainScreen(
     selectedFoot: SelectedFoot?,
     threshold: Int,
     pollingEnabled: Boolean,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
+    onStayConnectedChange: (Boolean) -> Unit,
     onCheck: () -> Unit,
     onStandby: (StandbyState) -> Unit,
     onFineAdjust: (FineAdjustment) -> Unit,
@@ -653,9 +654,16 @@ private fun MainScreen(
     val canUseConnection = !running || ready
     val hasSelectedFoot = selectedFoot != null
     val modePresentation = mainScreenModePresentation(
-        liveReady = ready,
-        monitoringActive = running,
+        running = running,
+        connectionState = connectionState,
         pollingEnabled = pollingEnabled && hasSelectedFoot
+    )
+    val stayConnected = stayConnectedPresentation(
+        running = running,
+        busy = busy,
+        bluetoothAvailable = bluetoothAvailable,
+        footSelected = hasSelectedFoot,
+        connectionState = connectionState
     )
     val display = SnapshotPresentation.create(snapshot)
     val presentation = if (hasSelectedFoot) {
@@ -707,15 +715,18 @@ private fun MainScreen(
                 DeviceMetadata(
                     selectedFoot = selectedFoot,
                     threshold = threshold,
+                    display = display,
                     deviceToThresholdGap = layout.deviceToThresholdGapDp.dp
                 )
                 Spacer(Modifier.height(layout.metadataToCardGapDp.dp))
 
-                StandbyCard(
+                FootControlsCard(
+                    stayConnected = stayConnected,
                     display = display,
-                    minHeight = layout.cardMinHeightDp.dp,
-                    enabled = controlsReady && snapshot.standby != StandbyState.UNKNOWN,
-                    onChange = onStandby
+                    minHeight = layout.footControlsMinHeightDp.dp,
+                    standbyEnabled = controlsReady && snapshot.standby != StandbyState.UNKNOWN,
+                    onStayConnectedChange = onStayConnectedChange,
+                    onStandbyChange = onStandby
                 )
                 Spacer(Modifier.height(layout.cardToStatusGapDp.dp))
                 AnkleAlignmentCard(
@@ -736,17 +747,9 @@ private fun MainScreen(
                 )
                 Spacer(Modifier.height(8.dp))
             }
-            ContextualActionRow(
-                accent = accent,
-                running = running,
-                busy = busy,
-                bluetoothAvailable = bluetoothAvailable,
-                footSelected = hasSelectedFoot,
-                canUseConnection = canUseConnection,
-                gap = layout.actionGapDp.dp,
-                onStart = onStart,
-                onStop = onStop,
-                onCheck = onCheck
+            CheckNowButton(
+                enabled = hasSelectedFoot && bluetoothAvailable && !busy && canUseConnection,
+                onClick = onCheck
             )
         }
     }
@@ -780,8 +783,14 @@ private fun MainHeader(
 private fun DeviceMetadata(
     selectedFoot: SelectedFoot?,
     threshold: Int,
+    display: SnapshotDisplayState,
     deviceToThresholdGap: Dp
 ) {
+    val checkedText = display.checkedLine(
+        display.lastChecked.takeIf { it > 0L }?.let {
+            Alerts.clockTime(LocalContext.current, it)
+        }
+    )
     Column(
         Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -799,6 +808,16 @@ private fun DeviceMetadata(
         Spacer(Modifier.height(deviceToThresholdGap))
         Text(
             text = "Alerts below $threshold%",
+            color = Muted,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = checkedText,
             color = Muted,
             fontSize = 12.sp,
             maxLines = 1,
@@ -835,140 +854,135 @@ private fun MainScreenStatusSlot(
 }
 
 @Composable
-private fun ContextualActionRow(
-    accent: Color,
-    running: Boolean,
-    busy: Boolean,
-    bluetoothAvailable: Boolean,
-    footSelected: Boolean,
-    canUseConnection: Boolean,
-    gap: Dp,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
-    onCheck: () -> Unit
+private fun CheckNowButton(
+    enabled: Boolean,
+    onClick: () -> Unit
 ) {
-    val contextualAction = mainScreenContextualAction(
-        running,
-        busy,
-        bluetoothAvailable,
-        footSelected
-    )
-    val contextualOnClick = when (contextualAction.type) {
-        MainScreenContextualActionType.START -> onStart
-        MainScreenContextualActionType.DISCONNECT -> onStop
-    }
-
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
-        OutlinedButton(
-            onClick = onCheck,
-            enabled = footSelected && bluetoothAvailable && !busy && canUseConnection,
-            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-            border = BorderStroke(1.dp, accent),
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = accent,
-                disabledContentColor = Muted
-            )
-        ) { Text("Check now", fontWeight = FontWeight.Bold) }
-
-        when (contextualAction.type) {
-            MainScreenContextualActionType.START -> Button(
-                onClick = contextualOnClick,
-                enabled = contextualAction.enabled,
-                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = Color(0xFF03140E),
-                    disabledContainerColor = Panel,
-                    disabledContentColor = Muted
-                )
-            ) { Text(contextualAction.label, fontWeight = FontWeight.Bold, maxLines = 1) }
-            MainScreenContextualActionType.DISCONNECT -> OutlinedButton(
-                onClick = contextualOnClick,
-                enabled = contextualAction.enabled,
-                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                border = BorderStroke(1.dp, Line),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = Ink,
-                    disabledContentColor = Muted
-                )
-            ) { Text(contextualAction.label, fontWeight = FontWeight.Bold, maxLines = 1) }
-        }
-    }
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = Color(0xFF03140E),
+            disabledContainerColor = Panel,
+            disabledContentColor = Muted
+        )
+    ) { Text("Check now", fontWeight = FontWeight.Bold) }
 }
 
 @Composable
-private fun StandbyCard(
+private fun FootControlsCard(
+    stayConnected: StayConnectedPresentation,
     display: SnapshotDisplayState,
     minHeight: Dp,
-    enabled: Boolean,
-    onChange: (StandbyState) -> Unit
+    standbyEnabled: Boolean,
+    onStayConnectedChange: (Boolean) -> Unit,
+    onStandbyChange: (StandbyState) -> Unit
 ) {
-    val isOn = display.standby == StandbyState.ON
-    val stateText = when {
+    val standbyOn = display.standby == StandbyState.ON
+    val standbySecondary = when {
         display.standbyAmbiguousAfterCommand -> "Not confirmed"
-        display.standby == StandbyState.ON -> "On"
-        display.standby == StandbyState.OFF -> "Off"
-        else -> "Not checked"
+        display.standby == StandbyState.UNKNOWN -> "Not checked"
+        else -> null
     }
-    val checkedText = display.checkedLine(
-        display.lastChecked.takeIf { it > 0L }?.let {
-            Alerts.clockTime(LocalContext.current, it)
-        }
-    )
-    val borderColor = if (isOn) Warn else Line
+    val standbyStateDescription = standbySecondary ?: if (standbyOn) "On" else "Off"
 
-    Row(
+    Column(
         Modifier.fillMaxWidth().heightIn(min = minHeight)
             .clip(RoundedCornerShape(14.dp)).background(Panel)
-            .border(1.dp, borderColor, RoundedCornerShape(14.dp))
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .border(1.dp, Line, RoundedCornerShape(14.dp))
+            .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        Column(Modifier.weight(1f)) {
+        Text(
+            "FOOT CONTROLS",
+            color = Muted,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
-                "STANDBY",
-                color = if (isOn) Warn else Muted,
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
+                "Stay connected",
+                color = Ink,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
             )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                stateText,
-                color = if (isOn) Warn else Ink,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(Modifier.height(3.dp))
-            Text(
-                checkedText,
-                color = Muted,
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+            Spacer(Modifier.width(12.dp))
+            Switch(
+                checked = stayConnected.checked,
+                enabled = stayConnected.enabled,
+                onCheckedChange = onStayConnectedChange,
+                modifier = Modifier.semantics {
+                    contentDescription = "Stay connected"
+                },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color(0xFF03140E),
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                    uncheckedThumbColor = Muted,
+                    uncheckedTrackColor = Panel,
+                    uncheckedBorderColor = Line,
+                    disabledCheckedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+                    disabledUncheckedTrackColor = Panel
+                )
             )
         }
 
-        Spacer(Modifier.width(12.dp))
-        Switch(
-            checked = isOn,
-            enabled = enabled,
-            onCheckedChange = { checked ->
-                onChange(if (checked) StandbyState.ON else StandbyState.OFF)
-            },
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color(0xFF2A1900),
-                checkedTrackColor = Warn,
-                uncheckedThumbColor = Muted,
-                uncheckedTrackColor = Panel,
-                uncheckedBorderColor = Line,
-                disabledCheckedTrackColor = Warn.copy(alpha = 0.45f),
-                disabledUncheckedTrackColor = Panel
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Standby",
+                    color = if (standbyOn) Warn else Ink,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                standbySecondary?.let { status ->
+                    Text(
+                        status,
+                        color = Muted,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(
+                checked = standbyOn,
+                enabled = standbyEnabled,
+                onCheckedChange = { checked ->
+                    onStandbyChange(if (checked) StandbyState.ON else StandbyState.OFF)
+                },
+                modifier = Modifier.semantics {
+                    contentDescription = "Standby"
+                    stateDescription = standbyStateDescription
+                },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color(0xFF2A1900),
+                    checkedTrackColor = Warn,
+                    uncheckedThumbColor = Muted,
+                    uncheckedTrackColor = Panel,
+                    uncheckedBorderColor = Line,
+                    disabledCheckedTrackColor = Warn.copy(alpha = 0.45f),
+                    disabledUncheckedTrackColor = Panel
+                )
             )
-        )
+        }
     }
 }
 
@@ -1605,6 +1619,12 @@ private fun SettingsScreen(
 
             Spacer(Modifier.height(28.dp))
 
+            Text("FOOT MODES", color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            Spacer(Modifier.height(10.dp))
+            FootModesCard()
+
+            Spacer(Modifier.height(28.dp))
+
             Text("ALERT THRESHOLD", color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
             Spacer(Modifier.height(10.dp))
             Box(
@@ -1692,6 +1712,43 @@ private fun SettingsScreen(
             )
             Spacer(Modifier.height(16.dp))
         }
+    }
+}
+
+@Composable
+private fun FootModesCard() {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Panel)
+            .border(1.dp, Line, RoundedCornerShape(14.dp))
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+    ) {
+        DisabledFootModeRow("Chair Exit Mode")
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+        DisabledFootModeRow("Relax Mode")
+    }
+}
+
+@Composable
+private fun DisabledFootModeRow(name: String) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            name,
+            color = Ink,
+            fontSize = 14.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            "Disabled",
+            color = Muted,
+            fontSize = 11.sp,
+            maxLines = 1
+        )
     }
 }
 

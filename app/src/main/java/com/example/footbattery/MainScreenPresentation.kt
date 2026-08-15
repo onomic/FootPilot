@@ -17,10 +17,9 @@ data class MainScreenLayoutSpec(
     val gaugeToDeviceGapDp: Float,
     val deviceToThresholdGapDp: Float,
     val metadataToCardGapDp: Float,
-    val cardMinHeightDp: Float,
+    val footControlsMinHeightDp: Float,
     val cardToStatusGapDp: Float,
-    val statusSlotHeightDp: Float,
-    val actionGapDp: Float
+    val statusSlotHeightDp: Float
 )
 
 /**
@@ -52,10 +51,9 @@ fun mainScreenLayoutSpec(
             gaugeToDeviceGapDp = 6f,
             deviceToThresholdGapDp = 4f,
             metadataToCardGapDp = 10f,
-            cardMinHeightDp = 92f,
+            footControlsMinHeightDp = 126f,
             cardToStatusGapDp = 8f,
-            statusSlotHeightDp = 36f,
-            actionGapDp = 8f
+            statusSlotHeightDp = 36f
         )
         MainScreenHeightClass.REGULAR -> MainScreenLayoutSpec(
             heightClass = heightClass,
@@ -68,10 +66,9 @@ fun mainScreenLayoutSpec(
             gaugeToDeviceGapDp = 7f,
             deviceToThresholdGapDp = 4f,
             metadataToCardGapDp = 12f,
-            cardMinHeightDp = 96f,
+            footControlsMinHeightDp = 130f,
             cardToStatusGapDp = 8f,
-            statusSlotHeightDp = 36f,
-            actionGapDp = 9f
+            statusSlotHeightDp = 36f
         )
         MainScreenHeightClass.TALL -> MainScreenLayoutSpec(
             heightClass = heightClass,
@@ -84,16 +81,17 @@ fun mainScreenLayoutSpec(
             gaugeToDeviceGapDp = 8f,
             deviceToThresholdGapDp = 4f,
             metadataToCardGapDp = 14f,
-            cardMinHeightDp = 100f,
+            footControlsMinHeightDp = 134f,
             cardToStatusGapDp = 10f,
-            statusSlotHeightDp = 36f,
-            actionGapDp = 10f
+            statusSlotHeightDp = 36f
         )
     }
 }
 
 enum class MainScreenMode {
-    LIVE,
+    CONNECTED,
+    CONNECTING,
+    DISCONNECTING,
     POLLING,
     IDLE
 }
@@ -105,23 +103,37 @@ data class MainScreenModePresentation(
     val pulses: Boolean
 )
 
-/** Resolves the header mode without implying polling during an active live session. */
+/** Resolves the passive header label from requested live ownership and actual connection truth. */
 fun mainScreenModePresentation(
-    liveReady: Boolean,
-    monitoringActive: Boolean,
+    running: Boolean,
+    connectionState: LiveConnectionState,
     pollingEnabled: Boolean
 ): MainScreenModePresentation {
     val mode = when {
-        liveReady -> MainScreenMode.LIVE
-        pollingEnabled && !monitoringActive -> MainScreenMode.POLLING
+        connectionState == LiveConnectionState.DISCONNECTING -> MainScreenMode.DISCONNECTING
+        running && connectionState == LiveConnectionState.READY -> MainScreenMode.CONNECTED
+        running -> MainScreenMode.CONNECTING
+        pollingEnabled -> MainScreenMode.POLLING
         else -> MainScreenMode.IDLE
     }
     return when (mode) {
-        MainScreenMode.LIVE -> MainScreenModePresentation(
+        MainScreenMode.CONNECTED -> MainScreenModePresentation(
             mode = mode,
-            label = "LIVE",
+            label = "CONNECTED",
             usesActiveColor = true,
             pulses = true
+        )
+        MainScreenMode.CONNECTING -> MainScreenModePresentation(
+            mode = mode,
+            label = "CONNECTING",
+            usesActiveColor = true,
+            pulses = true
+        )
+        MainScreenMode.DISCONNECTING -> MainScreenModePresentation(
+            mode = mode,
+            label = "DISCONNECTING",
+            usesActiveColor = false,
+            pulses = false
         )
         MainScreenMode.POLLING -> MainScreenModePresentation(
             mode = mode,
@@ -136,6 +148,41 @@ fun mainScreenModePresentation(
             pulses = false
         )
     }
+}
+
+data class StayConnectedPresentation(
+    val checked: Boolean,
+    val enabled: Boolean
+)
+
+/**
+ * Starting preserves the old prerequisite rule. Stopping is deliberately asymmetric: an active
+ * request remains an escape path during retry or Bluetooth loss, unless protected work is active.
+ */
+fun stayConnectedPresentation(
+    running: Boolean,
+    busy: Boolean,
+    bluetoothAvailable: Boolean,
+    footSelected: Boolean,
+    connectionState: LiveConnectionState
+): StayConnectedPresentation = when {
+    connectionState == LiveConnectionState.DISCONNECTING -> StayConnectedPresentation(
+        checked = false,
+        enabled = false
+    )
+    running -> StayConnectedPresentation(
+        checked = true,
+        enabled = !busy
+    )
+    else -> StayConnectedPresentation(
+        checked = false,
+        enabled = canStartMonitoring(
+            running = running,
+            busy = busy,
+            bluetoothAvailable = bluetoothAvailable,
+            footSelected = footSelected
+        )
+    )
 }
 
 enum class MainScreenStatusKind {
@@ -192,37 +239,6 @@ fun mainScreenOperationText(operation: BleOperationKind?): String? = when (opera
     BleOperationKind.AUTO_ALIGN -> "Automatic alignment"
     BleOperationKind.DISCONNECT -> "Disconnecting..."
     null -> null
-}
-
-enum class MainScreenContextualActionType {
-    START,
-    DISCONNECT
-}
-
-data class MainScreenContextualAction(
-    val type: MainScreenContextualActionType,
-    val label: String,
-    val enabled: Boolean
-)
-
-/** Pure contextual-action selection; enablement matches the existing Start/Disconnect rules. */
-fun mainScreenContextualAction(
-    running: Boolean,
-    busy: Boolean,
-    bluetoothAvailable: Boolean,
-    footSelected: Boolean
-): MainScreenContextualAction = if (running) {
-    MainScreenContextualAction(
-        type = MainScreenContextualActionType.DISCONNECT,
-        label = "Disconnect",
-        enabled = !busy
-    )
-} else {
-    MainScreenContextualAction(
-        type = MainScreenContextualActionType.START,
-        label = "Start",
-        enabled = canStartMonitoring(running, busy, bluetoothAvailable, footSelected)
-    )
 }
 
 private fun String?.trimmedOrNull(): String? = this?.trim()?.takeIf { it.isNotEmpty() }

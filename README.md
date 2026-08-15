@@ -5,14 +5,15 @@ level, reports low battery, queries and changes the foot's confirmed standby sta
 foot-authoritative ankle alignment controls. Battery and standby checks are saved as one verified
 snapshot. Ankle position is persisted separately in exact protocol millidegrees with its own
 certainty and verification time. Live battery values can be newer than the complete snapshot; they
-update the gauge and live-monitoring notification without changing the snapshot's `Last checked`
+update the gauge and ongoing connection notification without changing the snapshot's `Last checked`
 time.
 
 ## How the alert works
 
-A live in-process connection subscribes to battery updates while the app is running.
-Optional WorkManager polling briefly connects, obtains battery, confirmed standby, and ankle state,
-then disconnects and removes the bond. Low-battery alerts re-arm after charging above the
+The optional **Stay connected** mode keeps one live in-process BLE session open and subscribes to
+battery updates while the app is running. Separate WorkManager background polling briefly connects,
+obtains battery, confirmed standby, and ankle state, then disconnects and removes the bond.
+Low-battery alerts re-arm after charging above the
 configured threshold, so they fire once per discharge rather than repeatedly. Every valid battery
 reading drives this safety behavior even if the accompanying standby check fails; an incomplete
 read does not replace the last complete snapshot.
@@ -47,10 +48,11 @@ Pick whichever path fits what you have.
 3. Save the pairing PIN if the foot requires one, enter its advertised Bluetooth name, and tap
    **Find foot**. FootPilot saves it only after compatibility verification.
 4. Grant Bluetooth, nearby-device, and notification permissions when Android requests them.
-5. Tap **Check now** for battery, standby, and ankle truth from the foot, or **Start** for live
-   monitoring.
-6. Once standby has been checked, use the standby switch in the app or notification.
-7. With freshly confirmed standby OFF, fine-adjust by exactly `-0.1°` or `+0.1°`, save the confirmed
+5. Tap **Check now** for an on-demand battery, standby, and ankle check.
+6. Turn on **Stay connected** when you want FootPilot to keep the BLE connection open for smoother,
+   faster device controls while the app is running. Background polling remains a separate setting.
+7. Once standby has been checked, use the standby switch in the app or notification.
+8. With freshly confirmed standby OFF, fine-adjust by exactly `-0.1°` or `+0.1°`, save the confirmed
    angle into one of the four fixed footwear presets, recall a configured preset, or start
    **Auto Alignment**.
 
@@ -114,7 +116,7 @@ Android (especially Samsung/Xiaomi/OnePlus) may kill background Bluetooth to sav
 which would stop the alerts. To prevent that:
 - Settings → Apps → FootPilot → Battery → **Unrestricted** (or "Don't optimize").
 
-Scheduled polling is restored by WorkManager. Live monitoring ends with the app process.
+Scheduled polling is restored by WorkManager. A **Stay connected** session ends with the app process.
 
 ## Safety
 

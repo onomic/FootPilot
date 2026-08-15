@@ -56,17 +56,17 @@ class MainScreenPresentationTest {
         assertEquals(tallBoundary, mainScreenLayoutSpec(availableHeightDp = 820f, fontScale = 1f))
     }
 
-    @Test fun heightClassesExposeTheExpectedGaugeAndCardSizes() {
+    @Test fun heightClassesExposeTheExpectedGaugeAndFootControlSizes() {
         val compact = mainScreenLayoutSpec(640f, 1f)
         val regular = mainScreenLayoutSpec(760f, 1f)
         val tall = mainScreenLayoutSpec(900f, 1f)
 
         assertEquals(132f, compact.gaugeSizeDp, 0f)
-        assertEquals(92f, compact.cardMinHeightDp, 0f)
+        assertEquals(126f, compact.footControlsMinHeightDp, 0f)
         assertEquals(148f, regular.gaugeSizeDp, 0f)
-        assertEquals(96f, regular.cardMinHeightDp, 0f)
+        assertEquals(130f, regular.footControlsMinHeightDp, 0f)
         assertEquals(168f, tall.gaugeSizeDp, 0f)
-        assertEquals(100f, tall.cardMinHeightDp, 0f)
+        assertEquals(134f, tall.footControlsMinHeightDp, 0f)
     }
 
     @Test fun heightClassesExposeCenteredHierarchySpacing() {
@@ -93,96 +93,138 @@ class MainScreenPresentationTest {
         }
     }
 
-    @Test fun readyLiveConnectionResolvesToLive() {
+    @Test fun readyRunningConnectionResolvesToConnected() {
         val presentation = mainScreenModePresentation(
-            liveReady = true,
-            monitoringActive = false,
+            running = true,
+            connectionState = LiveConnectionState.READY,
             pollingEnabled = false
         )
 
-        assertEquals(MainScreenMode.LIVE, presentation.mode)
-        assertEquals("LIVE", presentation.label)
+        assertEquals(MainScreenMode.CONNECTED, presentation.mode)
+        assertEquals("CONNECTED", presentation.label)
     }
 
-    @Test fun liveTakesPriorityEvenWhenPollingIsEnabled() {
+    @Test fun connectedPresentationPreservesTheLivePulse() {
+        assertTrue(
+            mainScreenModePresentation(
+                running = true,
+                connectionState = LiveConnectionState.READY,
+                pollingEnabled = false
+            ).pulses
+        )
+    }
+
+    @Test fun connectingRunningConnectionResolvesToConnecting() {
+        assertEquals(
+            MainScreenMode.CONNECTING,
+            mainScreenModePresentation(
+                running = true,
+                connectionState = LiveConnectionState.CONNECTING,
+                pollingEnabled = false
+            ).mode
+        )
+    }
+
+    @Test fun discoveringRunningConnectionResolvesToConnecting() {
+        assertEquals(
+            MainScreenMode.CONNECTING,
+            mainScreenModePresentation(
+                running = true,
+                connectionState = LiveConnectionState.DISCOVERING,
+                pollingEnabled = false
+            ).mode
+        )
+    }
+
+    @Test fun initializingRunningConnectionResolvesToConnecting() {
+        assertEquals(
+            MainScreenMode.CONNECTING,
+            mainScreenModePresentation(
+                running = true,
+                connectionState = LiveConnectionState.INITIALIZING,
+                pollingEnabled = false
+            ).mode
+        )
+    }
+
+    @Test fun failedRunningConnectionResolvesToConnecting() {
+        assertEquals(
+            MainScreenMode.CONNECTING,
+            mainScreenModePresentation(
+                running = true,
+                connectionState = LiveConnectionState.FAILED,
+                pollingEnabled = false
+            ).mode
+        )
+    }
+
+    @Test fun connectingPresentationPulses() {
+        assertTrue(
+            mainScreenModePresentation(
+                running = true,
+                connectionState = LiveConnectionState.CONNECTING,
+                pollingEnabled = false
+            ).pulses
+        )
+    }
+
+    @Test fun disconnectingConnectionResolvesToDisconnecting() {
         val presentation = mainScreenModePresentation(
-            liveReady = true,
-            monitoringActive = true,
+            running = true,
+            connectionState = LiveConnectionState.DISCONNECTING,
             pollingEnabled = true
         )
 
-        assertEquals(MainScreenMode.LIVE, presentation.mode)
+        assertEquals(MainScreenMode.DISCONNECTING, presentation.mode)
+        assertEquals("DISCONNECTING", presentation.label)
+        assertFalse(presentation.usesActiveColor)
+        assertFalse(presentation.pulses)
     }
 
-    @Test fun inactiveMonitoringWithPollingEnabledResolvesToPolling() {
+    @Test fun stoppedConnectionWithPollingResolvesToPolling() {
         val presentation = mainScreenModePresentation(
-            liveReady = false,
-            monitoringActive = false,
+            running = false,
+            connectionState = LiveConnectionState.IDLE,
             pollingEnabled = true
         )
 
         assertEquals(MainScreenMode.POLLING, presentation.mode)
         assertEquals("POLLING", presentation.label)
+        assertTrue(presentation.usesActiveColor)
+        assertFalse(presentation.pulses)
     }
 
-    @Test fun activeMonitoringThatIsNotReadyDoesNotResolveToPolling() {
+    @Test fun stoppedConnectionWithoutPollingResolvesToIdle() {
         val presentation = mainScreenModePresentation(
-            liveReady = false,
-            monitoringActive = true,
-            pollingEnabled = true
-        )
-
-        assertEquals(MainScreenMode.IDLE, presentation.mode)
-    }
-
-    @Test fun neitherLiveNorPollingResolvesToIdle() {
-        val presentation = mainScreenModePresentation(
-            liveReady = false,
-            monitoringActive = false,
+            running = false,
+            connectionState = LiveConnectionState.IDLE,
             pollingEnabled = false
         )
 
         assertEquals(MainScreenMode.IDLE, presentation.mode)
         assertEquals("IDLE", presentation.label)
+        assertFalse(presentation.usesActiveColor)
+        assertFalse(presentation.pulses)
     }
 
-    @Test fun liveModePulses() {
-        assertTrue(
+    @Test fun liveRequestTakesPriorityOverPolling() {
+        assertEquals(
+            MainScreenMode.CONNECTING,
             mainScreenModePresentation(
-                liveReady = true,
-                monitoringActive = true,
-                pollingEnabled = false
-            ).pulses
-        )
-    }
-
-    @Test fun pollingModeDoesNotPulse() {
-        assertFalse(
-            mainScreenModePresentation(
-                liveReady = false,
-                monitoringActive = false,
+                running = true,
+                connectionState = LiveConnectionState.INITIALIZING,
                 pollingEnabled = true
-            ).pulses
+            ).mode
         )
     }
 
-    @Test fun idleModeDoesNotPulse() {
-        assertFalse(
-            mainScreenModePresentation(
-                liveReady = false,
-                monitoringActive = false,
-                pollingEnabled = false
-            ).pulses
+    @Test fun connectedAndConnectingModesUseActiveColorMetadata() {
+        assertTrue(
+            mainScreenModePresentation(true, LiveConnectionState.READY, false).usesActiveColor
         )
-    }
-
-    @Test fun liveAndPollingModesUseActiveColorMetadata() {
-        assertTrue(mainScreenModePresentation(true, true, false).usesActiveColor)
-        assertTrue(mainScreenModePresentation(false, false, true).usesActiveColor)
-    }
-
-    @Test fun idleModeUsesInactiveColorMetadata() {
-        assertFalse(mainScreenModePresentation(false, false, false).usesActiveColor)
+        assertTrue(
+            mainScreenModePresentation(true, LiveConnectionState.FAILED, false).usesActiveColor
+        )
     }
 
     @Test fun activeOperationOverridesVerificationAndOtherStatuses() {
@@ -256,37 +298,120 @@ class MainScreenPresentationTest {
         assertEquals("Standby on confirmed", presentation.statusText)
     }
 
-    @Test fun stoppedStatePresentsEnabledStartAction() {
-        val action = mainScreenContextualAction(
+    @Test fun stoppedEligibleStatePresentsUncheckedEnabledStayConnected() {
+        val presentation = stayConnectedPresentation(
             running = false,
             busy = false,
             bluetoothAvailable = true,
-            footSelected = true
+            footSelected = true,
+            connectionState = LiveConnectionState.IDLE
         )
 
-        assertEquals(MainScreenContextualActionType.START, action.type)
-        assertEquals("Start", action.label)
-        assertTrue(action.enabled)
+        assertFalse(presentation.checked)
+        assertTrue(presentation.enabled)
     }
 
-    @Test fun runningStatePresentsEnabledDisconnectAction() {
-        val action = mainScreenContextualAction(
+    @Test fun stoppedStateWithoutSelectedFootDisablesStayConnected() {
+        val presentation = stayConnectedPresentation(
+            running = false,
+            busy = false,
+            bluetoothAvailable = true,
+            footSelected = false,
+            connectionState = LiveConnectionState.IDLE
+        )
+
+        assertFalse(presentation.checked)
+        assertFalse(presentation.enabled)
+    }
+
+    @Test fun stoppedStateWithoutBluetoothDisablesStayConnected() {
+        val presentation = stayConnectedPresentation(
+            running = false,
+            busy = false,
+            bluetoothAvailable = false,
+            footSelected = true,
+            connectionState = LiveConnectionState.IDLE
+        )
+
+        assertFalse(presentation.checked)
+        assertFalse(presentation.enabled)
+    }
+
+    @Test fun stoppedBusyStateDisablesStayConnected() {
+        val presentation = stayConnectedPresentation(
+            running = false,
+            busy = true,
+            bluetoothAvailable = true,
+            footSelected = true,
+            connectionState = LiveConnectionState.IDLE
+        )
+
+        assertFalse(presentation.checked)
+        assertFalse(presentation.enabled)
+    }
+
+    @Test fun runningReadyStatePresentsCheckedEnabledStayConnected() {
+        val presentation = stayConnectedPresentation(
             running = true,
             busy = false,
             bluetoothAvailable = true,
-            footSelected = true
+            footSelected = true,
+            connectionState = LiveConnectionState.READY
         )
 
-        assertEquals(MainScreenContextualActionType.DISCONNECT, action.type)
-        assertEquals("Disconnect", action.label)
-        assertTrue(action.enabled)
+        assertTrue(presentation.checked)
+        assertTrue(presentation.enabled)
     }
 
-    @Test fun contextualActionPreservesExistingEnablementRules() {
-        assertFalse(mainScreenContextualAction(false, true, true, footSelected = true).enabled)
-        assertFalse(mainScreenContextualAction(false, false, false, footSelected = true).enabled)
-        assertFalse(mainScreenContextualAction(true, true, true, footSelected = true).enabled)
-        assertTrue(mainScreenContextualAction(true, false, false, footSelected = true).enabled)
-        assertFalse(mainScreenContextualAction(false, false, true, footSelected = false).enabled)
+    @Test fun runningBusyStateDisablesStayConnected() {
+        val presentation = stayConnectedPresentation(
+            running = true,
+            busy = true,
+            bluetoothAvailable = true,
+            footSelected = true,
+            connectionState = LiveConnectionState.READY
+        )
+
+        assertTrue(presentation.checked)
+        assertFalse(presentation.enabled)
+    }
+
+    @Test fun runningFailedStateCanStillBeTurnedOff() {
+        val presentation = stayConnectedPresentation(
+            running = true,
+            busy = false,
+            bluetoothAvailable = true,
+            footSelected = true,
+            connectionState = LiveConnectionState.FAILED
+        )
+
+        assertTrue(presentation.checked)
+        assertTrue(presentation.enabled)
+    }
+
+    @Test fun runningStateCanBeTurnedOffWithoutBluetooth() {
+        val presentation = stayConnectedPresentation(
+            running = true,
+            busy = false,
+            bluetoothAvailable = false,
+            footSelected = true,
+            connectionState = LiveConnectionState.READY
+        )
+
+        assertTrue(presentation.checked)
+        assertTrue(presentation.enabled)
+    }
+
+    @Test fun disconnectingStatePresentsUncheckedDisabledStayConnected() {
+        val presentation = stayConnectedPresentation(
+            running = true,
+            busy = false,
+            bluetoothAvailable = true,
+            footSelected = true,
+            connectionState = LiveConnectionState.DISCONNECTING
+        )
+
+        assertFalse(presentation.checked)
+        assertFalse(presentation.enabled)
     }
 }
