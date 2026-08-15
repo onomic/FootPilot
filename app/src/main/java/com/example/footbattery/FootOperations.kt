@@ -31,6 +31,51 @@ sealed interface FootOperationResult {
     data object Skipped : FootOperationResult
 }
 
+data class FullSnapshotApplicationDecision(
+    val reduction: SnapshotReduction,
+    val result: FootOperationResult
+)
+
+/** Classifies snapshot completeness separately from whether an ankle query was intentionally skipped. */
+fun classifyFullSnapshotRead(
+    previous: SnapshotState,
+    read: FullSnapshotRead,
+    checkedAt: Long
+): FullSnapshotApplicationDecision {
+    val reduction = SnapshotReducer.reduce(
+        previous,
+        SnapshotEvent.NormalCheck(
+            batteryLevel = read.batteryLevel,
+            standby = read.standby,
+            checkedAt = checkedAt
+        )
+    )
+    val result = when {
+        !reduction.completeSnapshotSaved ->
+            FootOperationResult.Partial(partialCheckMessage(read))
+        read.ankleDisposition == AnkleSnapshotDisposition.QUERIED && read.ankleMd == null ->
+            FootOperationResult.Partial(
+                read.ankleError ?: "Ankle angle could not be verified"
+            )
+        else -> FootOperationResult.Complete(reduction.snapshot)
+    }
+    return FullSnapshotApplicationDecision(reduction, result)
+}
+
+private fun partialCheckMessage(read: FullSnapshotRead): String {
+    val standbyConfirmed = read.standby != null && read.standby != StandbyState.UNKNOWN
+    return when {
+        read.batteryLevel != null && standbyConfirmed &&
+            read.ankleDisposition == AnkleSnapshotDisposition.QUERIED && read.ankleMd == null ->
+            read.ankleError ?: "Ankle check failed"
+        read.batteryLevel != null && !standbyConfirmed ->
+            read.standbyError ?: "Standby check failed"
+        read.batteryLevel == null && standbyConfirmed ->
+            read.batteryError ?: "Battery check failed"
+        else -> read.standbyError ?: read.batteryError ?: "Check failed — is the foot in range?"
+    }
+}
+
 /** Shared high-level transactions for the activity, notification service, worker, and live link. */
 object FootOperations {
     private val userScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -370,23 +415,14 @@ object FootOperations {
     ): FootOperationResult {
         AnkleRepo.begin(AnkleOperation.QUERYING, "Checking ankle angle...")
         val read = session.readFullSnapshot()
-        if (read.ankleMd != null) {
-            AnkleRepo.confirm(ctx, read.ankleMd)
-        } else {
-            AnkleRepo.verificationFailed(
-                ctx,
-                read.ankleError ?: "Ankle angle could not be verified"
-            )
-        }
+        AnkleRepo.applySnapshotRead(ctx, read)
         val previous = BatteryRepo.snapshot.value
-        val reduction = SnapshotReducer.reduce(
-            previous,
-            SnapshotEvent.NormalCheck(
-                batteryLevel = read.batteryLevel,
-                standby = read.standby,
-                checkedAt = System.currentTimeMillis()
-            )
+        val decision = classifyFullSnapshotRead(
+            previous = previous,
+            read = read,
+            checkedAt = System.currentTimeMillis()
         )
+        val reduction = decision.reduction
         applyFreshBattery(ctx, reduction.freshBatteryLevel)
 
         if (reduction.completeSnapshotSaved) {
@@ -398,18 +434,16 @@ object FootOperations {
                 else -> "Checked"
             }
             BatteryRepo.standbyStatus.value = ""
-            if (read.ankleMd == null) {
-                val message = read.ankleError ?: "Ankle angle could not be verified"
+            if (decision.result is FootOperationResult.Partial) {
                 BatteryRepo.status.value = "${BatteryRepo.status.value} · ankle unavailable"
-                return FootOperationResult.Partial(message)
             }
-            return FootOperationResult.Complete(reduction.snapshot)
+            return decision.result
         }
 
-        val message = partialCheckMessage(read)
+        val message = (decision.result as FootOperationResult.Partial).message
         BatteryRepo.status.value = message
         BatteryRepo.standbyStatus.value = message
-        return FootOperationResult.Partial(message)
+        return decision.result
     }
 
     private suspend fun changeAndApplyOnSession(
@@ -681,16 +715,6 @@ object FootOperations {
         if (updated == previous) return
         Prefs.saveIncompleteSnapshot(ctx, updated)
         BatteryRepo.applyIncompleteSnapshot(updated)
-    }
-
-    private fun partialCheckMessage(read: FullSnapshotRead): String = when {
-        read.batteryLevel != null && read.standby != null && read.ankleMd == null ->
-            read.ankleError ?: "Ankle check failed"
-        read.batteryLevel != null && read.standby == null ->
-            read.standbyError ?: "Standby check failed"
-        read.batteryLevel == null && read.standby != null ->
-            read.batteryError ?: "Battery check failed"
-        else -> read.standbyError ?: read.batteryError ?: "Check failed — is the foot in range?"
     }
 
     private fun FootOperationResult.transientMessage(): String? = when (this) {

@@ -26,15 +26,6 @@ import kotlinx.coroutines.withTimeout
 
 open class BleSessionException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
-data class FullSnapshotRead(
-    val batteryLevel: Int?,
-    val standby: StandbyState?,
-    val ankleMd: Int?,
-    val batteryError: String? = null,
-    val standbyError: String? = null,
-    val ankleError: String? = null
-)
-
 /**
  * One callback-driven GATT client. Android permits only one outstanding GATT operation;
  * [operationMutex] plus the matching callback deferred enforce that rule for every read,
@@ -142,45 +133,47 @@ class FootGattSession(
 
     suspend fun readFullSnapshot(): FullSnapshotRead = transactionMutex.withLock {
         ensureUsable()
-        var standby: StandbyState? = null
-        var standbyError: String? = null
-        try {
-            standby = requireResponse(
-                exchangeStandby(
-                    StandbyProtocol.queryCommand(),
-                    StandbyResponseKind.QUERY
-                )
-            ).state
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            standbyError = e.userMessage("Standby check failed")
-        }
+        FullSnapshotTransaction.execute(
+            object : FullSnapshotTransport {
+                override suspend fun queryStandby(): FullSnapshotFieldRead<StandbyState> = try {
+                    FullSnapshotFieldRead.Success(
+                        requireResponse(
+                            exchangeStandby(
+                                StandbyProtocol.queryCommand(),
+                                StandbyResponseKind.QUERY
+                            )
+                        ).state
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    FullSnapshotFieldRead.Failed(e.userMessage("Standby check failed"))
+                }
 
-        var ankleMd: Int? = null
-        var ankleError: String? = null
-        try {
-            val response = requireAnkleResponse(
-                exchangeAnkle(AnkleProtocol.queryCommand(), AnkleResponseKind.QUERY)
-            )
-            ankleMd = response.millidegrees.takeIf(AnkleProtocol::isSupported)
-                ?: throw BleSessionException("Foot reported an unsupported ankle angle")
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            ankleError = e.userMessage("Ankle check failed")
-        }
+                override suspend fun queryAnkle(): FullSnapshotFieldRead<Int> = try {
+                    FullSnapshotFieldRead.Success(
+                        requireAnkleResponse(
+                            exchangeAnkle(
+                                AnkleProtocol.queryCommand(),
+                                AnkleResponseKind.QUERY
+                            )
+                        ).millidegrees
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    FullSnapshotFieldRead.Failed(e.userMessage("Ankle check failed"))
+                }
 
-        var battery: Int? = null
-        var batteryError: String? = null
-        try {
-            battery = readBatteryInternal()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            batteryError = e.userMessage("Battery check failed")
-        }
-        FullSnapshotRead(battery, standby, ankleMd, batteryError, standbyError, ankleError)
+                override suspend fun readBattery(): FullSnapshotFieldRead<Int> = try {
+                    FullSnapshotFieldRead.Success(readBatteryInternal())
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    FullSnapshotFieldRead.Failed(e.userMessage("Battery check failed"))
+                }
+            }
+        )
     }
 
     /** Live-only subscription, performed after the required initial full snapshot operation. */

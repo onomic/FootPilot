@@ -239,6 +239,11 @@ class MainScreenPresentationTest {
         assertEquals(MainScreenStatusKind.ACTIVE_OPERATION, presentation.statusKind)
     }
 
+    @Test fun liveConnectUsesConnectionWideStatusWording() {
+        assertEquals("Connecting...", mainScreenOperationText(BleOperationKind.LIVE_CONNECT))
+        assertEquals("Checking...", mainScreenOperationText(BleOperationKind.LIVE_REFRESH))
+    }
+
     @Test fun verificationWarningOverridesStandbyAndGeneralStatuses() {
         val presentation = MainScreenPresentation.create(
             activeOperationText = null,
@@ -309,6 +314,25 @@ class MainScreenPresentationTest {
 
         assertFalse(presentation.checked)
         assertTrue(presentation.enabled)
+    }
+
+    @Test fun stayConnectedEnablementHasNoStandbyPrerequisite() {
+        val byStandby = listOf(StandbyState.ON, StandbyState.OFF).associateWith { _ ->
+            stayConnectedPresentation(
+                running = false,
+                busy = false,
+                bluetoothAvailable = true,
+                footSelected = true,
+                connectionState = LiveConnectionState.IDLE
+            )
+        }
+
+        assertTrue(byStandby.getValue(StandbyState.ON).enabled)
+        assertTrue(byStandby.getValue(StandbyState.OFF).enabled)
+        assertEquals(
+            byStandby.getValue(StandbyState.ON),
+            byStandby.getValue(StandbyState.OFF)
+        )
     }
 
     @Test fun stoppedStateWithoutSelectedFootDisablesStayConnected() {

@@ -222,13 +222,13 @@ data class MainScreenPresentation(
     }
 }
 
-/** Keeps the established standby wording while also covering disconnect operations. */
+/** Maps coordinated work to restrained main-screen operation wording. */
 fun mainScreenOperationText(operation: BleOperationKind?): String? = when (operation) {
+    BleOperationKind.LIVE_CONNECT -> "Connecting..."
     BleOperationKind.MANUAL_CHECK,
     BleOperationKind.NOTIFICATION_CHECK,
     BleOperationKind.SCHEDULED_CHECK,
-    BleOperationKind.LIVE_CONNECT,
-    BleOperationKind.LIVE_REFRESH -> "Checking standby..."
+    BleOperationKind.LIVE_REFRESH -> "Checking..."
     BleOperationKind.FOOT_VERIFICATION -> "Verifying foot..."
     BleOperationKind.FOOT_SELECTION_CHANGE -> "Updating foot..."
     BleOperationKind.STANDBY_ON -> "Turning standby on..."

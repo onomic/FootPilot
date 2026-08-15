@@ -1,5 +1,13 @@
 # FootPilot — Project Notes & Handoff
 
+> **Standby-safe connection correction:** **Stay connected** is valid with confirmed Standby ON or
+> OFF. Standby ON blocks movement, not the BLE connection, and is never turned off automatically to
+> connect. A full snapshot queries Standby first and sends an ankle query only after fresh Standby
+> OFF; confirmed ON or unavailable Standby truth skips ankle traffic and still proceeds to the
+> standard battery read while the session is usable. Battery/Standby snapshot completeness remains
+> independent from ankle certainty. An intentional ankle skip demotes any older confirmed angle to
+> labelled `Last verified` history and is not reported as an ankle or connection failure.
+
 > **FootPilot controls UX update:** **Check now** is the one full-width primary main-screen action.
 > The former Start/Disconnect bottom action is now a state-derived **Stay connected** switch in a
 > compact **FOOT CONTROLS** card beside the existing confirmation-driven Standby switch. Turning it

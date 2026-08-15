@@ -82,6 +82,44 @@ object AnklePersistence {
     }
 }
 
+/** Applies only ankle truth obtained (or deliberately not obtained) during a full snapshot. */
+fun ankleStateAfterSnapshotRead(
+    previous: AnkleState,
+    read: FullSnapshotRead,
+    verifiedAt: Long
+): AnkleState = when {
+    read.ankleDisposition == AnkleSnapshotDisposition.QUERIED && read.ankleMd != null -> {
+        require(AnkleProtocol.isSupported(read.ankleMd))
+        AnkleState(
+            lastVerifiedMd = read.ankleMd,
+            lastVerifiedAt = verifiedAt,
+            certainty = AnkleCertainty.CONFIRMED,
+            operation = AnkleOperation.IDLE,
+            message = null
+        )
+    }
+
+    read.ankleDisposition == AnkleSnapshotDisposition.QUERIED -> previous.copy(
+        certainty = if (previous.certainty == AnkleCertainty.UNKNOWN_AFTER_COMMAND) {
+            AnkleCertainty.UNKNOWN_AFTER_COMMAND
+        } else {
+            AnkleCertainty.UNKNOWN
+        },
+        operation = AnkleOperation.IDLE,
+        message = read.ankleError ?: "Ankle angle could not be verified"
+    )
+
+    else -> previous.copy(
+        certainty = if (previous.certainty == AnkleCertainty.UNKNOWN_AFTER_COMMAND) {
+            AnkleCertainty.UNKNOWN_AFTER_COMMAND
+        } else {
+            AnkleCertainty.UNKNOWN
+        },
+        operation = AnkleOperation.IDLE,
+        message = null
+    )
+}
+
 /** Shared ankle state kept independent from battery/standby snapshot completeness. */
 object AnkleRepo {
     private val initialized = AtomicBoolean(false)
@@ -132,20 +170,14 @@ object AnkleRepo {
         Prefs.saveAnkleState(ctx.applicationContext, unknown)
     }
 
-    /** A fresh query failed: retain any prior value only as history, never current truth. */
-    fun verificationFailed(ctx: Context, message: String) {
-        val current = state.value
-        val unverified = current.copy(
-            certainty = if (current.certainty == AnkleCertainty.UNKNOWN_AFTER_COMMAND) {
-                AnkleCertainty.UNKNOWN_AFTER_COMMAND
-            } else {
-                AnkleCertainty.UNKNOWN
-            },
-            operation = AnkleOperation.IDLE,
-            message = message
+    fun applySnapshotRead(ctx: Context, read: FullSnapshotRead) {
+        val updated = ankleStateAfterSnapshotRead(
+            previous = state.value,
+            read = read,
+            verifiedAt = System.currentTimeMillis()
         )
-        state.value = unverified
-        Prefs.saveAnkleState(ctx.applicationContext, unverified)
+        state.value = updated
+        Prefs.saveAnkleState(ctx.applicationContext, updated)
     }
 
     fun fail(message: String) {

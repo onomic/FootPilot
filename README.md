@@ -11,8 +11,10 @@ time.
 ## How the alert works
 
 The optional **Stay connected** mode keeps one live in-process BLE session open and subscribes to
-battery updates while the app is running. Separate WorkManager background polling briefly connects,
-obtains battery, confirmed standby, and ankle state, then disconnects and removes the bond.
+battery updates while the app is running. It works with Standby ON or OFF and never changes Standby
+automatically; Standby ON blocks movement, not the connection. Separate WorkManager background
+polling briefly connects, obtains battery and confirmed standby, queries ankle only after fresh
+Standby OFF, then disconnects and removes the bond.
 Low-battery alerts re-arm after charging above the
 configured threshold, so they fire once per discharge rather than repeatedly. Every valid battery
 reading drives this safety behavior even if the accompanying standby check fails; an incomplete
@@ -48,7 +50,8 @@ Pick whichever path fits what you have.
 3. Save the pairing PIN if the foot requires one, enter its advertised Bluetooth name, and tap
    **Find foot**. FootPilot saves it only after compatibility verification.
 4. Grant Bluetooth, nearby-device, and notification permissions when Android requests them.
-5. Tap **Check now** for an on-demand battery, standby, and ankle check.
+5. Tap **Check now** for an on-demand battery and standby check. Ankle is also queried when the fresh
+   standby result is OFF.
 6. Turn on **Stay connected** when you want FootPilot to keep the BLE connection open for smoother,
    faster device controls while the app is running. Background polling remains a separate setting.
 7. Once standby has been checked, use the standby switch in the app or notification.
@@ -90,8 +93,9 @@ freshly queries standby at execution time. Movement proceeds only when the foot 
 OFF. A successful Android write is not optimistic confirmation: the final ankle query is
 authoritative. If movement may have occurred but that verification fails, the app records
 `UNKNOWN_AFTER_COMMAND`, displays `Unknown`, and retains any older value only as explicitly labelled
-`Last verified` history until a query restores certainty. Reconnects query device truth and never
-replay cached angles or presets. After a process restart, a persisted angle is likewise historical
+`Last verified` history until a query restores certainty. Snapshot reads and reconnects query ankle
+truth only after fresh Standby OFF; otherwise any cached angle remains historical and is never
+replayed as current truth. After a process restart, a persisted angle is likewise historical
 until a fresh typed query confirms it. A final foot-confirmed value within one millidegree of the request is
 accepted as the device result; the exact queried value—not the request—is what is stored and shown.
 

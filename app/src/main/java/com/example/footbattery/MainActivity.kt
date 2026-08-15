@@ -1532,7 +1532,7 @@ private fun SettingsScreen(
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Used automatically when the foot asks to pair. Leave blank if no code is needed.",
+                    "Used automatically when the foot asks to pair. You can find the code on the back of the foot.",
                     color = Muted,
                     fontSize = 11.sp,
                     lineHeight = 15.sp

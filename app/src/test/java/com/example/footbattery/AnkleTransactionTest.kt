@@ -1,6 +1,7 @@
 package com.example.footbattery
 
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -35,6 +36,7 @@ class AnkleTransactionTest {
         assertFalse(result.commandWriteAccepted)
         assertNull(result.freshStandby)
         assertTrue(result.error.orEmpty().contains("Standby is unknown"))
+        assertEquals(0, transport.ankleCommands.size)
     }
 
     @Test fun fineAdjustmentUsesFreshExactQueryValue() = runBlocking {
@@ -55,6 +57,9 @@ class AnkleTransactionTest {
         assertEquals(4599, result.finalConfirmedMd)
         assertTrue(result.requestSatisfied)
         assertTrue(result.finalTruthConfirmed)
+        assertEquals(3, transport.ankleCommands.size)
+        assertArrayEquals(AnkleProtocol.queryCommand(), transport.ankleCommands.first())
+        assertArrayEquals(AnkleProtocol.queryCommand(), transport.ankleCommands.last())
         assertEquals(
             4599,
             AnkleProtocol.parseResponse(
