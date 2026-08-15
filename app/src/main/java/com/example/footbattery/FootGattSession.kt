@@ -13,6 +13,7 @@ import android.bluetooth.BluetoothStatusCodes
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.content.ContextCompat
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -41,6 +42,8 @@ class FootGattSession(
         private const val CONNECTION_TIMEOUT_MS = 20_000L
         private const val GATT_OPERATION_TIMEOUT_MS = 5_000L
         private const val COMMAND_RESPONSE_TIMEOUT_MS = 3_000L
+        private const val DISCONNECT_RELEASE_TIMEOUT_MS = 5_000L
+        private const val TAG = "FootPilotBle"
     }
 
     private enum class OperationType { DESCRIPTOR_WRITE, CHARACTERISTIC_WRITE, CHARACTERISTIC_READ }
@@ -62,6 +65,8 @@ class FootGattSession(
     private var pending: PendingOperation? = null
     private val connected = CompletableDeferred<Unit>()
     private val servicesDiscovered = CompletableDeferred<Unit>()
+    private val disconnected = CompletableDeferred<Unit>()
+    private val closeOutcome = CompletableDeferred<TargetReleaseOutcome>()
     private val aa01Events = Channel<Aa01Event>(Channel.UNLIMITED)
     private val closing = AtomicBoolean(false)
     private val poisoned = AtomicBoolean(false)
@@ -107,7 +112,7 @@ class FootGattSession(
                     throw BleSessionException("Could not start the Bluetooth connection", e)
                 } ?: throw BleSessionException("Could not start the Bluetooth connection")
                 gatt = client
-                BleRegistry.add(client)
+                BleRegistry.add(client, target.address)
 
                 connected.await()
                 onProgress(LiveConnectionState.DISCOVERING)
@@ -252,21 +257,83 @@ class FootGattSession(
         try { gatt?.disconnect() } catch (_: Exception) {}
     }
 
+    /**
+     * Temporary-session close path. The GATT stays owned until Android reports DISCONNECTED or the
+     * bounded callback wait becomes explicitly uncertain; close/removal still happen on cancellation.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun disconnectAndCloseAwaitingRelease(): TargetReleaseOutcome {
+        if (!closing.compareAndSet(false, true)) return closeOutcome.await()
+        val client = prepareClose()
+        var outcome: TargetReleaseOutcome = TargetReleaseOutcome.Uncertain(
+            "GATT disconnect release was interrupted"
+        )
+        try {
+            outcome = when {
+                client == null || disconnected.isCompleted -> TargetReleaseOutcome.AlreadyReleased
+                else -> try {
+                    client.disconnect()
+                    try {
+                        withTimeout(DISCONNECT_RELEASE_TIMEOUT_MS) { disconnected.await() }
+                        debug("GATT_DISCONNECTED observed")
+                        TargetReleaseOutcome.Complete
+                    } catch (_: TimeoutCancellationException) {
+                        debug("GATT_DISCONNECTED timed out")
+                        TargetReleaseOutcome.Uncertain("GATT disconnect callback timed out")
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    TargetReleaseOutcome.Uncertain("GATT disconnect request failed")
+                }
+            }
+            return outcome
+        } catch (e: CancellationException) {
+            outcome = TargetReleaseOutcome.Uncertain("GATT disconnect wait was cancelled")
+            throw e
+        } finally {
+            closeClient(client)
+            closeOutcome.complete(outcome)
+        }
+    }
+
     @SuppressLint("MissingPermission")
     fun disconnectAndClose(removeBond: Boolean) {
         if (!closing.compareAndSet(false, true)) return
+        val client = prepareClose()
+        var outcome: TargetReleaseOutcome = if (client == null || disconnected.isCompleted) {
+            TargetReleaseOutcome.AlreadyReleased
+        } else {
+            TargetReleaseOutcome.Uncertain("GATT closed without awaiting disconnect")
+        }
+        try {
+            if (client != null && !disconnected.isCompleted) {
+                try { client.disconnect() } catch (_: Exception) {}
+                if (disconnected.isCompleted) outcome = TargetReleaseOutcome.Complete
+            }
+        } finally {
+            closeClient(client)
+            closeOutcome.complete(outcome)
+        }
+        if (removeBond) BondHelper.forceUnbond(appContext, target)
+    }
+
+    private fun prepareClose(): BluetoothGatt? {
         initialized = false
         batteryNotificationsEnabled = false
         failPending(BleSessionException("Bluetooth session closed"))
         aa01Events.close()
         val client = gatt
         gatt = null
+        return client
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun closeClient(client: BluetoothGatt?) {
         if (client != null) {
-            try { client.disconnect() } catch (_: Exception) {}
             try { client.close() } catch (_: Exception) {}
             BleRegistry.remove(client)
         }
-        if (removeBond) BondHelper.forceUnbond(appContext, target)
     }
 
     private fun checkConnectPermission() {
@@ -617,6 +684,7 @@ class FootGattSession(
                 return
             }
             if (newState == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
+                if (newState == BluetoothProfile.STATE_DISCONNECTED) disconnected.complete(Unit)
                 val message = if (status == BluetoothGatt.GATT_SUCCESS) {
                     "Foot disconnected"
                 } else {
@@ -719,6 +787,10 @@ class FootGattSession(
             "$fallback: foot reported ${observed.state.displayName()}"
         is BleSessionException -> message ?: fallback
         else -> fallback
+    }
+
+    private fun debug(message: String) {
+        if (BuildConfig.DEBUG) Log.d(TAG, message)
     }
 }
 

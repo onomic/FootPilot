@@ -728,7 +728,7 @@ private fun MainScreen(
                     onStayConnectedChange = onStayConnectedChange,
                     onStandbyChange = onStandby
                 )
-                Spacer(Modifier.height(layout.cardToStatusGapDp.dp))
+                Spacer(Modifier.height(layout.cardToCardGapDp.dp))
                 AnkleAlignmentCard(
                     state = ankleState,
                     presentation = anklePresentation,

@@ -2,7 +2,7 @@ package com.example.footbattery
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothGatt
-import java.util.Collections
+import java.util.Locale
 
 /**
  * Tracks every BluetoothGatt the app opens (live connection, on-demand checks, polling),
@@ -10,29 +10,52 @@ import java.util.Collections
  * connection's own disconnect would never reach.
  */
 object BleRegistry {
-    private val open = Collections.synchronizedSet(mutableSetOf<BluetoothGatt>())
+    private val open = mutableMapOf<BluetoothGatt, String>()
 
-    fun add(g: BluetoothGatt) { open.add(g) }
-    fun remove(g: BluetoothGatt) { open.remove(g) }
-    fun count(): Int = open.size
+    fun add(g: BluetoothGatt, targetAddress: String) {
+        synchronized(open) {
+            open[g] = targetAddress.trim().uppercase(Locale.US)
+        }
+    }
+
+    fun remove(g: BluetoothGatt) {
+        synchronized(open) { open.remove(g) }
+    }
+
+    fun count(): Int = synchronized(open) { open.size }
 
     @SuppressLint("MissingPermission")
     fun disconnectAll() {
-        synchronized(open) {
-            for (g in open.toList()) {
-                try { g.disconnect() } catch (_: Exception) {}
+        val clients = synchronized(open) { open.keys.toList() }
+        for (g in clients) {
+            try { g.disconnect() } catch (_: Exception) {}
+        }
+    }
+
+    /** One-time hard recovery for one target; normal temporary cleanup closes its own GATT. */
+    @SuppressLint("MissingPermission")
+    fun closeTarget(targetAddress: String): Int {
+        val normalized = targetAddress.trim().uppercase(Locale.US)
+        val clients = synchronized(open) {
+            open.filterValues { it == normalized }.keys.toList().also { matches ->
+                matches.forEach(open::remove)
             }
         }
+        for (g in clients) {
+            try { g.disconnect() } catch (_: Exception) {}
+            try { g.close() } catch (_: Exception) {}
+        }
+        return clients.size
     }
 
     @SuppressLint("MissingPermission")
     fun closeAll() {
-        synchronized(open) {
-            for (g in open.toList()) {
-                try { g.disconnect() } catch (_: Exception) {}
-                try { g.close() } catch (_: Exception) {}
-            }
-            open.clear()
+        val clients = synchronized(open) {
+            open.keys.toList().also { open.clear() }
+        }
+        for (g in clients) {
+            try { g.disconnect() } catch (_: Exception) {}
+            try { g.close() } catch (_: Exception) {}
         }
     }
 }

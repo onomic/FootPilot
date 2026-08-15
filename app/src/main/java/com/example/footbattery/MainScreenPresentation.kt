@@ -18,6 +18,7 @@ data class MainScreenLayoutSpec(
     val deviceToThresholdGapDp: Float,
     val metadataToCardGapDp: Float,
     val footControlsMinHeightDp: Float,
+    val cardToCardGapDp: Float,
     val cardToStatusGapDp: Float,
     val statusSlotHeightDp: Float
 )
@@ -52,6 +53,7 @@ fun mainScreenLayoutSpec(
             deviceToThresholdGapDp = 4f,
             metadataToCardGapDp = 10f,
             footControlsMinHeightDp = 126f,
+            cardToCardGapDp = 12f,
             cardToStatusGapDp = 8f,
             statusSlotHeightDp = 36f
         )
@@ -67,6 +69,7 @@ fun mainScreenLayoutSpec(
             deviceToThresholdGapDp = 4f,
             metadataToCardGapDp = 12f,
             footControlsMinHeightDp = 130f,
+            cardToCardGapDp = 14f,
             cardToStatusGapDp = 8f,
             statusSlotHeightDp = 36f
         )
@@ -82,6 +85,7 @@ fun mainScreenLayoutSpec(
             deviceToThresholdGapDp = 4f,
             metadataToCardGapDp = 14f,
             footControlsMinHeightDp = 134f,
+            cardToCardGapDp = 16f,
             cardToStatusGapDp = 10f,
             statusSlotHeightDp = 36f
         )

@@ -1,5 +1,19 @@
 # FootPilot — Project Notes & Handoff
 
+> **BLE session handoff correction:** Temporary checks and controls now retain the existing
+> process-wide BLE coordinator through an explicit, target-specific release barrier before a new
+> **Stay connected** session may start. The established force-unbond policy remains in temporary
+> cleanup, but disconnect and bond release are observed from Android lifecycle events and current
+> state with bounded uncertain outcomes instead of being assumed complete when API calls return.
+> The live connect coroutine independently checks the latest release generation immediately before
+> opening its GATT. An uncertain generation receives at most one target-specific hard recovery, so
+> rapid temporary-to-live handoff can recover without manually cycling **Stay connected**, while
+> ordinary later live disconnects retain the existing lightweight retry loop. The older 600 ms delay
+> in the explicit live Stop path is unchanged and is not used as handoff synchronization.
+>
+> The main-screen card rhythm also now has a dedicated adaptive **FOOT CONTROLS** to **ANKLE
+> ALIGNMENT** gap (12/14/16 dp); the existing ankle-card to status-slot gap is unchanged.
+
 > **Standby-safe connection correction:** **Stay connected** is valid with confirmed Standby ON or
 > OFF. Standby ON blocks movement, not the BLE connection, and is never turned off automatically to
 > connect. A full snapshot queries Standby first and sends an ankle query only after fresh Standby

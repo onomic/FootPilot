@@ -1,6 +1,7 @@
 package com.example.footbattery
 
 import android.content.Context
+import android.util.Log
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -14,6 +15,7 @@ import kotlinx.coroutines.launch
 /** Owns the one persistent, fully initialized GATT session used by live monitoring. */
 object LiveConnection {
     private const val RETRY_DELAY_MS = 5_000L
+    private const val TAG = "FootPilotBle"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val generation = AtomicInteger(0)
@@ -83,6 +85,12 @@ object LiveConnection {
                         val coordinated = BleOperationCoordinator.tryRun(BleOperationKind.LIVE_CONNECT) {
                             if (!wantConnected || generation.get() != expectedGeneration) return@tryRun
 
+                            BleTargetReleaseBarrier.awaitLiveConnectReady(
+                                requireNotNull(appContext),
+                                target
+                            )
+                            if (!wantConnected || generation.get() != expectedGeneration) return@tryRun
+
                             lateinit var created: FootGattSession
                             created = FootGattSession(
                                 requireNotNull(appContext),
@@ -99,6 +107,7 @@ object LiveConnection {
                             )
                             candidate = created
                             session = created
+                            debug("LIVE_CONNECT connect attempt")
                             created.connectAndInitialize { state ->
                                 if (session === created) {
                                     BatteryRepo.connectionState.value = state
@@ -135,6 +144,7 @@ object LiveConnection {
                             BatteryRepo.connectionState.value = LiveConnectionState.READY
                             BatteryRepo.running.value = true
                             hasBeenReady = true
+                            debug("LIVE_CONNECT READY")
                             if (BatteryRepo.status.value == "Monitoring" ||
                                 BatteryRepo.status.value == "Checked"
                             ) {
@@ -235,5 +245,9 @@ object LiveConnection {
             Alerts.cancelOngoing(app)
             if (Prefs.polling(app)) Alerts.updatePollStatus(app)
         }
+    }
+
+    private fun debug(message: String) {
+        if (BuildConfig.DEBUG) Log.d(TAG, message)
     }
 }

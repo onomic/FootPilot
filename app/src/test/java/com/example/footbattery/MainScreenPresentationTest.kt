@@ -83,12 +83,16 @@ class MainScreenPresentationTest {
         assertEquals(10f, compact.metadataToCardGapDp, 0f)
         assertEquals(12f, regular.metadataToCardGapDp, 0f)
         assertEquals(14f, tall.metadataToCardGapDp, 0f)
+        assertEquals(12f, compact.cardToCardGapDp, 0f)
+        assertEquals(14f, regular.cardToCardGapDp, 0f)
+        assertEquals(16f, tall.cardToCardGapDp, 0f)
         assertEquals(8f, compact.cardToStatusGapDp, 0f)
         assertEquals(8f, regular.cardToStatusGapDp, 0f)
         assertEquals(10f, tall.cardToStatusGapDp, 0f)
 
         listOf(compact, regular, tall).forEach { layout ->
             assertTrue(layout.metadataToCardGapDp > 0f)
+            assertTrue(layout.cardToCardGapDp > layout.cardToStatusGapDp)
             assertTrue(layout.cardToStatusGapDp > 0f)
         }
     }

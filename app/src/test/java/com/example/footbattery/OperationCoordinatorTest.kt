@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OperationCoordinatorTest {
@@ -115,5 +116,28 @@ class OperationCoordinatorTest {
         release.complete(Unit)
         assertEquals("fine", (fine.await() as CoordinatedResult.Completed).value)
         assertEquals("disconnect", (disconnect.await() as CoordinatedResult.Completed).value)
+    }
+
+    @Test fun temporaryOperationRemainsBusyWhileItsReleaseBarrierIsPending() = runBlocking {
+        val coordinator = OperationCoordinator()
+        val protocolComplete = CompletableDeferred<Unit>()
+        val releaseComplete = CompletableDeferred<Unit>()
+        val temporary = async {
+            coordinator.tryRun(BleOperationKind.MANUAL_CHECK) {
+                protocolComplete.complete(Unit)
+                releaseComplete.await()
+            }
+        }
+
+        protocolComplete.await()
+        assertTrue(coordinator.isBusy())
+        assertSame(
+            CoordinatedResult.Busy,
+            coordinator.tryRun(BleOperationKind.LIVE_CONNECT) { Unit }
+        )
+
+        releaseComplete.complete(Unit)
+        temporary.await()
+        assertFalse(coordinator.isBusy())
     }
 }

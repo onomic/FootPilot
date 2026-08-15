@@ -9,9 +9,11 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
 enum class CheckOrigin {
@@ -629,7 +631,11 @@ object FootOperations {
             }
             FootOperationResult.Failed(message)
         } finally {
-            session.disconnectAndClose(removeBond = true)
+            // This remains inside the coordinator-owned operation. NonCancellable guarantees that
+            // cancellation cannot strand its GATT, bond observer, or published release generation.
+            withContext(NonCancellable) {
+                BleTargetReleaseBarrier.releaseTemporarySession(ctx, session)
+            }
         }
     }
 
