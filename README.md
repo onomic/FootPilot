@@ -149,6 +149,12 @@ When Stay connected or background checking is active, FootPilot shows an ongoing
 
 Controls appear only when FootPilot can safely verify the required device state. During automatic alignment, the notification also reminds you when to keep the foot flat and when to lift it.
 
+<p align="center">
+  <img src="docs/images/footpilot-notification.jpg" alt="Expanded FootPilot notification showing battery, ankle alignment, footwear presets, and quick controls" width="620">
+  <br>
+  <sub>Expanded FootPilot notification on Samsung One UI.</sub>
+</p>
+
 ## Troubleshooting
 
 ### FootPilot cannot find the foot
