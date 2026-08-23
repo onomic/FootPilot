@@ -73,6 +73,31 @@ class AutoAlignmentTransactionTest {
         )
     }
 
+    @Test fun modeEventIsIgnoredWhileAutoWaitsForCompletion() = runBlocking {
+        val transport = FakeAutoTransport(
+            querySteps = listOf(ankle(8000), ankle(569)),
+            waitSteps = listOf(
+                AutoEventWaitResult.Event(
+                    Aa01Event.FootMode(
+                        FootModeResponse(
+                            FootMode.RELAX,
+                            FootModeResponseKind.QUERY,
+                            FootModeValue.ON
+                        ),
+                        trailingBytes = listOf(0x55)
+                    )
+                ),
+                AutoEventWaitResult.Event(Aa01Event.AutoCompletion(emptyList()))
+            )
+        )
+
+        val result = AutoAlignmentTransaction.execute(transport)
+
+        assertTrue(result.completionObserved)
+        assertEquals(569, result.finalConfirmedMd)
+        assertEquals(2, transport.waitTimeouts.size)
+    }
+
     @Test fun inactivityTimeoutWithSuccessfulFinalQueryRestoresTruthWithoutSuccess() = runBlocking {
         val transport = FakeAutoTransport(
             querySteps = listOf(ankle(8000), ankle(569)),

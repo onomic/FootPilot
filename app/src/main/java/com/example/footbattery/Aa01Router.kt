@@ -8,6 +8,11 @@ sealed interface Aa01Event {
 
     data class Ankle(val response: AnkleResponse) : Aa01Event
 
+    data class FootMode(
+        val response: FootModeResponse,
+        val trailingBytes: List<Int>
+    ) : Aa01Event
+
     /** The observed status byte is deliberately opaque. */
     data class AutoActivity(
         val opaqueStatus: Int,
@@ -30,6 +35,12 @@ object Aa01Router {
         }
         AnkleProtocol.parseResponse(payload)?.let { response ->
             return Aa01Event.Ankle(response)
+        }
+        FootModeProtocol.parseResponse(payload)?.let { response ->
+            return Aa01Event.FootMode(
+                response = response,
+                trailingBytes = payload.drop(7).map { it.toInt() and 0xFF }
+            )
         }
 
         if (payload.hasPrefix(0xB2, 0xB0, 0x04, 0x01) && payload.size >= 5) {
@@ -58,6 +69,11 @@ object Aa01WriteAllowlist {
         payload.contentEquals(StandbyProtocol.queryCommand()) ||
             payload.contentEquals(StandbyProtocol.setCommand(StandbyState.ON)) ||
             payload.contentEquals(StandbyProtocol.setCommand(StandbyState.OFF)) ||
+            FootMode.entries.any { mode ->
+                payload.contentEquals(FootModeProtocol.queryCommand(mode)) ||
+                    payload.contentEquals(FootModeProtocol.setCommand(mode, FootModeValue.ON)) ||
+                    payload.contentEquals(FootModeProtocol.setCommand(mode, FootModeValue.OFF))
+            } ||
             payload.contentEquals(AnkleProtocol.queryCommand()) ||
             isSupportedAnkleSet(payload) ||
             payload.contentEquals(AutoAlignmentProtocol.startCommand())

@@ -2,7 +2,8 @@
 
 FootPilot is an Android app for a user-selected Össur Proprio Foot. It reads the standard BLE battery
 level, reports low battery, queries and changes the foot's confirmed standby state, and provides
-foot-authoritative ankle alignment controls. Battery and standby checks are saved as one verified
+foot-authoritative Chair Exit, Relax, and ankle alignment controls. Chair Exit and Relax remain
+compact switches in Settings and are freshly queried from the selected foot. Battery and standby checks are saved as one verified
 snapshot. Ankle position is persisted separately in exact protocol millidegrees with its own
 certainty and verification time. Live battery values can be newer than the complete snapshot; they
 update the gauge and ongoing connection notification without changing the snapshot's `Last checked`
@@ -23,7 +24,8 @@ read does not replace the last complete snapshot.
 Foot Setup, alert threshold, pairing PIN, polling interval, and polling toggle are available in
 Settings. FootPilot starts with no selected foot, including after an upgrade from beta2. A foot is
 saved only after an exact-name foreground scan and verification of the expected battery and Össur
-GATT profile; the app never shows a general Bluetooth device list.
+GATT profile; the app never shows a general Bluetooth device list. Opening Settings refreshes both
+Foot Modes through one coordinator-owned session without adding work to normal battery checks.
 
 ## Getting a runnable app
 
@@ -55,7 +57,8 @@ Pick whichever path fits what you have.
 6. Turn on **Stay connected** when you want FootPilot to keep the BLE connection open for smoother,
    faster device controls while the app is running. Background polling remains a separate setting.
 7. Once standby has been checked, use the standby switch in the app or notification.
-8. With freshly confirmed standby OFF, fine-adjust by exactly `-0.1°` or `+0.1°`, save the confirmed
+8. In Settings, use the freshly queried **Chair Exit Mode** and **Relax Mode** switches as needed.
+9. With freshly confirmed standby OFF, fine-adjust by exactly `-0.1°` or `+0.1°`, save the confirmed
    angle into one of the four fixed footwear presets, recall a configured preset, or start
    **Auto Alignment**.
 
@@ -128,6 +131,8 @@ All proprietary writes go only to AA01, after AA01 and AA02 notification setup, 
 single `FootGattSession` and process-wide operation coordinator. The complete allowlist is:
 
 - query standby, set standby ON, and set standby OFF;
+- query Relax Mode and set its absolute ON/OFF state;
+- query Chair Exit Mode and set its absolute ON/OFF state;
 - query ankle;
 - set an absolute ankle target encoded as signed little-endian `Int32` millidegrees; and
 - start Auto Alignment with `B2 B0 04 00`.

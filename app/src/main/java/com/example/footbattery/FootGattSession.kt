@@ -200,6 +200,25 @@ class FootGattSession(
             StandbyTransaction.execute(requested, standbyTransport())
         }
 
+    suspend fun queryFootMode(mode: FootMode): FootModeCommandExchangeResult =
+        transactionMutex.withLock {
+            ensureUsable()
+            exchangeFootMode(
+                mode = mode,
+                command = FootModeProtocol.queryCommand(mode),
+                expectedKind = FootModeResponseKind.QUERY
+            )
+        }
+
+    suspend fun changeFootMode(
+        mode: FootMode,
+        requested: FootModeValue
+    ): FootModeTransactionRead = transactionMutex.withLock {
+        require(requested != FootModeValue.UNKNOWN)
+        ensureUsable()
+        FootModeTransaction.execute(mode, requested, footModeTransport())
+    }
+
     /** Notification action derives the opposite target from a fresh response on this session. */
     suspend fun toggleStandby(): StandbyTransactionRead = transactionMutex.withLock {
         ensureUsable()
@@ -469,6 +488,21 @@ class FootGattSession(
             )
         }
 
+    private fun footModeTransport(): FootModeTransactionTransport =
+        object : FootModeTransactionTransport {
+            override suspend fun exchange(
+                mode: FootMode,
+                command: ByteArray,
+                expectedKind: FootModeResponseKind,
+                expectedValue: FootModeValue?
+            ): FootModeCommandExchangeResult = exchangeFootMode(
+                mode,
+                command,
+                expectedKind,
+                expectedValue
+            )
+        }
+
     private fun discardQueuedAa01Events() {
         while (aa01Events.tryReceive().isSuccess) {
             // A new command may only consume packets observed after this transaction point.
@@ -559,6 +593,60 @@ class FootGattSession(
         }
     }
 
+    private suspend fun exchangeFootMode(
+        mode: FootMode,
+        command: ByteArray,
+        expectedKind: FootModeResponseKind,
+        expectedValue: FootModeValue? = null
+    ): FootModeCommandExchangeResult {
+        discardQueuedAa01Events()
+        debug(
+            if (expectedKind == FootModeResponseKind.QUERY) {
+                "FOOT_MODE_QUERY ${mode.name}"
+            } else {
+                "FOOT_MODE_SET ${mode.name} ${expectedValue?.name ?: "UNKNOWN"}"
+            }
+        )
+        try {
+            writeAa01(command)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return FootModeCommandExchangeResult.WriteFailed(
+                e.userMessage("Bluetooth command write failed")
+            )
+        }
+
+        return try {
+            val response = withTimeout(COMMAND_RESPONSE_TIMEOUT_MS) {
+                while (true) {
+                    val event = aa01Events.receive()
+                    if (event is Aa01Event.FootMode &&
+                        FootModeProtocol.matches(
+                            event.response,
+                            mode,
+                            expectedKind,
+                            expectedValue
+                        )
+                    ) {
+                        return@withTimeout event.response
+                    }
+                }
+                @Suppress("UNREACHABLE_CODE")
+                error("unreachable")
+            }
+            FootModeCommandExchangeResult.Response(response)
+        } catch (_: TimeoutCancellationException) {
+            FootModeCommandExchangeResult.ResponseMissing("Mode response timed out")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            FootModeCommandExchangeResult.ResponseMissing(
+                e.userMessage("Mode response failed")
+            )
+        }
+    }
+
     private suspend fun awaitAutoEvent(timeoutMs: Long): AutoEventWaitResult = try {
         withTimeout(timeoutMs) {
             while (true) {
@@ -567,6 +655,7 @@ class FootGattSession(
                     is Aa01Event.AutoCompletion,
                     is Aa01Event.Ankle -> return@withTimeout AutoEventWaitResult.Event(event)
                     is Aa01Event.Standby,
+                    is Aa01Event.FootMode,
                     is Aa01Event.Unknown -> Unit
                 }
             }

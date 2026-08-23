@@ -90,6 +90,33 @@ class OperationCoordinatorTest {
         Unit
     }
 
+    @Test fun allChairAndRelaxMutationsUseDeviceControlReservation() = runBlocking {
+        val kinds = listOf(
+            BleOperationKind.CHAIR_EXIT_ON,
+            BleOperationKind.CHAIR_EXIT_OFF,
+            BleOperationKind.RELAX_ON,
+            BleOperationKind.RELAX_OFF
+        )
+        kinds.forEach { kind ->
+            val coordinator = OperationCoordinator()
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val mode = async {
+                coordinator.runDeviceControl(kind) {
+                    entered.complete(Unit)
+                    release.await()
+                }
+            }
+            entered.await()
+            assertSame(
+                CoordinatedResult.Busy,
+                coordinator.tryRun(BleOperationKind.FOOT_MODES_REFRESH) { Unit }
+            )
+            release.complete(Unit)
+            mode.await()
+        }
+    }
+
     @Test fun fineAdjustmentBlocksCheckWhileDisconnectWaitsForSafeRelease() = runBlocking {
         val coordinator = OperationCoordinator()
         val entered = CompletableDeferred<Unit>()

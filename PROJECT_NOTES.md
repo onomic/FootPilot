@@ -1,5 +1,40 @@
 # FootPilot — Project Notes & Handoff
 
+## Captured Chair Exit and Relax mode protocol
+
+The following AA01 packets were isolated in dedicated Össur Logic captures and are the complete
+authorized protocol for these two Settings controls:
+
+```text
+Relax
+Query   B0 B0 33 13 81 20
+ON      B1 B0 33 13 81 00 01
+OFF     B1 B0 33 13 81 00 00
+Response prefix B0/B1 B0 33 13 81 A0 STATE
+
+Chair Exit
+Query   B0 B0 34 13 81 20
+ON      B1 B0 34 13 81 00 01
+OFF     B1 B0 34 13 81 00 00
+Response prefix B0/B1 B0 34 13 81 A0 STATE
+
+STATE 00 = OFF
+STATE 01 = ON
+```
+
+The mutation authority model is fresh QUERY, no SET when already at the absolute target, otherwise
+absolute SET followed by a final QUERY. The final query is authoritative. A completed Android write
+with a missing SET response proceeds to final verification; if that also fails, UI truth is
+ambiguous rather than optimistic. Response bytes after `STATE` remain opaque. Both modes persist on
+the foot, but FootPilot never treats local state as foot truth.
+
+Opening Settings is the primary synchronization point. One coordinator-owned live READY session is
+reused when available; otherwise one safe temporary session queries Chair Exit and Relax
+sequentially and releases through `BleTargetReleaseBarrier`. Mode queries are not added to Check
+now, notification Check, or scheduled polling. Explicit absolute mutations have one generation-safe
+automatic retry after the shared 15-second BLE delay; the retry begins with a fresh query and is
+cancelled by newer intent or selected-foot change. Refresh failure never auto-retries.
+
 > **Live retry and historical-angle correction:** The first user-requested **Stay connected**
 > attempt remains immediate. A genuine persistent connection failure or unexpected loss after
 > READY now enters one fixed 15-second, cancellation-safe retry wait before the same owner coroutine
@@ -48,10 +83,9 @@
 >
 > The passive header now reports `CONNECTED`, `CONNECTING`, `DISCONNECTING`, `POLLING`, or `IDLE`;
 > connected/connecting retain the established pulse. Snapshot-derived checked-time wording moved
-> below the alert threshold, including incomplete and never-checked states. Settings now includes a
-> noninteractive **FOOT MODES** card where Chair Exit Mode and Relax Mode are visual `Disabled`
-> placeholders only. Background polling and notification actions remain separate and unchanged.
-> This update adds no BLE command, preference, service, session owner, or protocol behavior.
+> below the alert threshold, including incomplete and never-checked states. The later captured-mode
+> update replaces the original **FOOT MODES** placeholders with foot-authoritative Chair Exit and
+> Relax switches. Background polling and notification actions remain separate and unchanged.
 
 > **FootPilot beta3 update:** The visible product name is now FootPilot while the repository,
 > `com.example.footbattery` application ID, namespace, Kotlin packages, and notification action
@@ -81,9 +115,10 @@
 
 > **Ankle Alignment v1 update:** This addendum supersedes the standby-only command boundary in the
 > older handoff below without rewriting that historical record. The proprietary AA01 allowlist is
-> now standby query/on/off, ankle query, absolute ankle set using signed little-endian `Int32`
-> millidegrees, and Auto start `B2 B0 04 00`. `FootGattSession` remains the sole GATT owner; its one
-> typed AA01 router and transaction mutex serve standby, ankle, and Auto traffic, while the existing
+> now standby query/on/off, exact Chair Exit and Relax query/on/off, ankle query, absolute ankle set
+> using signed little-endian `Int32` millidegrees, and Auto start `B2 B0 04 00`. `FootGattSession`
+> remains the sole GATT owner; its one typed AA01 router and transaction mutex serve standby, mode,
+> ankle, and Auto traffic, while the existing
 > process-wide coordinator serializes live, manual, notification, worker, and disconnect work. AA01
 > and AA02 are subscribed before commands. `B2 B0 04 02` remains unknown and is never sent.
 >
@@ -324,6 +359,8 @@ All Kotlin under `app/src/main/java/com/example/footbattery/`:
 - ⚙ gear (top-right) → Settings.
 
 ### Settings screen (scrollable)
+- **Foot Modes** — foot-authoritative Chair Exit Mode and Relax Mode switches, refreshed together
+  when Settings opens.
 - **Alert threshold** — stepper, **5–50%**, steps of 5.
 - **Pairing code** — numeric field, digits only, capped at 8 (covers 4/6-digit). Saved persistently.
 - **Background polling** — on/off toggle.
@@ -480,9 +517,9 @@ available in Android's notification framework.
 
 ## 12. Guardrails / philosophy to preserve
 
-- **Constrained proprietary access.** The app may write only the confirmed AA01 standby query/on/off
-  packets documented by Standby v1. It must not send any other proprietary command and must never
-  write standby packets to AA02.
+- **Constrained proprietary access.** The app may write only the exact allowlisted AA01 standby,
+  Chair Exit, Relax, ankle, and Auto packets documented above. It must never wildcard a packet
+  family, infer opaque bytes, or write proprietary packets to AA02.
 - The **peep on disconnect** is the user's trusted signal that the link truly dropped; preserve it on the
   explicit Disconnect action.
 - The **in-app check is the gold standard** for speed/seamlessness; any background/notification path

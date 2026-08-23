@@ -115,6 +115,7 @@ object AutoAlignmentTransaction {
                         is Aa01Event.Ankle ->
                             wait = transport.awaitRelevantEvent(INACTIVITY_TIMEOUT_MS)
                         is Aa01Event.Standby,
+                        is Aa01Event.FootMode,
                         is Aa01Event.Unknown ->
                             wait = transport.awaitRelevantEvent(INACTIVITY_TIMEOUT_MS)
                     }

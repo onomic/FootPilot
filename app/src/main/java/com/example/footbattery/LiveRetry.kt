@@ -3,9 +3,10 @@ package com.example.footbattery
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 
+/** Single code-level tuning point shared by live reconnects and safe absolute mode retries. */
 internal const val LIVE_RETRY_DELAY_SECONDS = 15
 
-/** One-second, cancellation-safe presentation timer for a genuine persistent reconnect. */
+/** One-second, cancellation-safe presentation timer for a bounded BLE retry wait. */
 internal class LiveRetryCountdown(
     private val totalSeconds: Int = LIVE_RETRY_DELAY_SECONDS,
     private val awaitTick: suspend () -> Unit = { delay(1_000L) }

@@ -129,7 +129,10 @@ class MainActivity : ComponentActivity() {
 
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { bluetoothAvailable = canUseBluetooth() }
+    ) {
+        bluetoothAvailable = canUseBluetooth()
+        if (showSettings) FootOperations.launchFootModesRefresh(applicationContext)
+    }
 
     private var pendingFootSearchName: String? = null
     private var footSearchJob: Job? = null
@@ -161,6 +164,7 @@ class MainActivity : ComponentActivity() {
         intervalMin = Prefs.intervalMin(this)
         pairingCode = Prefs.pairingCode(this)
         footNameInput = SelectedFootRepository.current(this)?.name.orEmpty()
+        FootModeRepo.syncTarget(SelectedFootRepository.current(this)?.address)
         BatteryRepo.ensureInitialized(this)
         AnkleRepo.ensureInitialized(this)
         PresetRepository.ensureInitialized(this)
@@ -198,6 +202,7 @@ class MainActivity : ComponentActivity() {
                 val ankleState by AnkleRepo.state.collectAsState()
                 val presetState by PresetRepository.state.collectAsState()
                 val selectedFoot by SelectedFootRepository.selected.collectAsState()
+                val footModesState by FootModeRepo.state.collectAsState()
                 val latestRunning by rememberUpdatedState(running)
 
                 LaunchedEffect(ankleState.message) {
@@ -265,6 +270,9 @@ class MainActivity : ComponentActivity() {
                             ankleOperationActive = ankleState.operation != AnkleOperation.IDLE,
                             searching = footSetupFeedback is FootSetupFeedback.Finding
                         ),
+                        footModesState = footModesState,
+                        footModeControlsAvailable = bluetoothAvailable && !coordination.isBusy &&
+                            (LiveConnection.isReady() || LiveConnection.canUseTemporarySession()),
                         onThreshold = { applyThreshold(it) },
                         onPolling = { applyPolling(it) },
                         onInterval = { applyInterval(it) },
@@ -272,6 +280,7 @@ class MainActivity : ComponentActivity() {
                         onFootName = { applyFootNameInput(it) },
                         onFindFoot = ::requestFindFoot,
                         onRemoveFoot = ::removeSelectedFoot,
+                        onFootModeChange = ::changeFootMode,
                         onBack = ::leaveSettings
                     )
                 } else {
@@ -301,6 +310,7 @@ class MainActivity : ComponentActivity() {
                             cancelFootSearch(clearFeedback = true)
                             footNameInput = selectedFoot?.name.orEmpty()
                             showSettings = true
+                            FootOperations.launchFootModesRefresh(applicationContext)
                         }
                     )
                 }
@@ -395,6 +405,7 @@ class MainActivity : ComponentActivity() {
                     if (result.targetChanged) polling = false
                     footNameInput = result.foot.name
                     footSetupFeedback = FootSetupFeedback.Idle
+                    FootOperations.launchFootModesRefresh(applicationContext)
                 }
                 is FootSetupSearchResult.NotFound -> footSetupFeedback = FootSetupFeedback.Error(
                     "Couldn't find ${result.name}. Check the name and try again."
@@ -561,6 +572,14 @@ class MainActivity : ComponentActivity() {
         if (!hasAll()) { permLauncher.launch(neededPerms()); return }
         Alerts.ensureChannels(this)
         FootOperations.launchStandbyChange(applicationContext, requested)
+    }
+
+    private fun changeFootMode(mode: FootMode, requested: FootModeValue) {
+        if (!hasBluetoothPermission()) {
+            permLauncher.launch(neededPerms())
+            return
+        }
+        FootOperations.launchFootModeChange(applicationContext, mode, requested)
     }
 
     private fun fineAdjust(adjustment: FineAdjustment) {
@@ -1487,11 +1506,14 @@ private fun SettingsScreen(
     footName: String,
     footSetupFeedback: FootSetupFeedback,
     footSetupAvailability: FootSetupActionAvailability,
+    footModesState: FootModesState,
+    footModeControlsAvailable: Boolean,
     onThreshold: (Int) -> Unit, onPolling: (Boolean) -> Unit, onInterval: (Int) -> Unit,
     onPairingCode: (String) -> Unit,
     onFootName: (String) -> Unit,
     onFindFoot: () -> Unit,
     onRemoveFoot: () -> Unit,
+    onFootModeChange: (FootMode, FootModeValue) -> Unit,
     onBack: () -> Unit
 ) {
     val accent = MaterialTheme.colorScheme.primary
@@ -1629,7 +1651,12 @@ private fun SettingsScreen(
 
             Text("FOOT MODES", color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
             Spacer(Modifier.height(10.dp))
-            FootModesCard()
+            FootModesCard(
+                state = footModesState,
+                selectedFoot = selectedFoot,
+                controlsAvailable = footModeControlsAvailable,
+                onChange = onFootModeChange
+            )
 
             Spacer(Modifier.height(28.dp))
 
@@ -1724,38 +1751,99 @@ private fun SettingsScreen(
 }
 
 @Composable
-private fun FootModesCard() {
+private fun FootModesCard(
+    state: FootModesState,
+    selectedFoot: SelectedFoot?,
+    controlsAvailable: Boolean,
+    onChange: (FootMode, FootModeValue) -> Unit
+) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Panel)
             .border(1.dp, Line, RoundedCornerShape(14.dp))
             .padding(horizontal = 16.dp, vertical = 4.dp)
     ) {
-        DisabledFootModeRow("Chair Exit Mode")
+        FootModeRow(
+            mode = FootMode.CHAIR_EXIT,
+            status = state.chairExit,
+            hasSelectedFoot = selectedFoot != null,
+            controlsAvailable = controlsAvailable,
+            onChange = onChange
+        )
         Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
-        DisabledFootModeRow("Relax Mode")
+        FootModeRow(
+            mode = FootMode.RELAX,
+            status = state.relax,
+            hasSelectedFoot = selectedFoot != null,
+            controlsAvailable = controlsAvailable,
+            onChange = onChange
+        )
     }
 }
 
 @Composable
-private fun DisabledFootModeRow(name: String) {
+private fun FootModeRow(
+    mode: FootMode,
+    status: FootModeStatus,
+    hasSelectedFoot: Boolean,
+    controlsAvailable: Boolean,
+    onChange: (FootMode, FootModeValue) -> Unit
+) {
+    val accent = MaterialTheme.colorScheme.primary
+    val presentation = FootModePresentation.create(
+        mode = mode,
+        status = status,
+        hasSelectedFoot = hasSelectedFoot,
+        controlsAvailable = controlsAvailable
+    )
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            name,
-            color = Ink,
-            fontSize = 14.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
-        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                mode.displayName,
+                color = Ink,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            presentation.secondaryText?.let { secondary ->
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    secondary,
+                    color = Muted,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
         Spacer(Modifier.width(12.dp))
-        Text(
-            "Disabled",
-            color = Muted,
-            fontSize = 11.sp,
-            maxLines = 1
+        Switch(
+            checked = presentation.checked,
+            onCheckedChange = { checked ->
+                onChange(
+                    mode,
+                    if (checked) FootModeValue.ON else FootModeValue.OFF
+                )
+            },
+            enabled = presentation.enabled,
+            modifier = Modifier.semantics {
+                contentDescription = presentation.contentDescription
+                stateDescription = presentation.stateDescription
+            },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF03140E),
+                checkedTrackColor = accent,
+                uncheckedThumbColor = Muted,
+                uncheckedTrackColor = Panel,
+                uncheckedBorderColor = Line,
+                disabledCheckedThumbColor = Color(0xFF03140E).copy(alpha = 0.72f),
+                disabledCheckedTrackColor = accent.copy(alpha = 0.42f),
+                disabledUncheckedThumbColor = Muted.copy(alpha = 0.55f),
+                disabledUncheckedTrackColor = Panel,
+                disabledUncheckedBorderColor = Line.copy(alpha = 0.72f)
+            )
         )
     }
 }

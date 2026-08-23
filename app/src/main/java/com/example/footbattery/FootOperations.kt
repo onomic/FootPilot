@@ -5,13 +5,18 @@ import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.content.ContextCompat
+import java.util.EnumMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -80,7 +85,11 @@ private fun partialCheckMessage(read: FullSnapshotRead): String {
 
 /** Shared high-level transactions for the activity, notification service, worker, and live link. */
 object FootOperations {
+    private const val TAG = "FootPilotBle"
     private val userScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val modeJobGuard = Any()
+    private val modeJobs = EnumMap<FootMode, Job>(FootMode::class.java)
+    private var modeRefreshJob: Job? = null
 
     fun launchManualCheck(ctx: Context) {
         val app = ctx.applicationContext
@@ -105,6 +114,71 @@ object FootOperations {
     fun launchAutoAlign(ctx: Context) {
         val app = ctx.applicationContext
         userScope.launch { autoAlign(app) }
+    }
+
+    fun launchFootModesRefresh(ctx: Context) {
+        val app = ctx.applicationContext
+        val target = SelectedFootRepository.current(app)
+        FootModeRepo.syncTarget(target?.address)
+        if (target == null) return
+        if (!FootModeRepo.beginRefresh(target.address)) return
+        debugFootMode("FOOT_MODE_REFRESH begin")
+
+        synchronized(modeJobGuard) {
+            if (modeRefreshJob?.isActive == true) return
+            lateinit var launched: Job
+            launched = userScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    refreshFootModes(app, target)
+                } finally {
+                    synchronized(modeJobGuard) {
+                        if (modeRefreshJob === launched) modeRefreshJob = null
+                    }
+                }
+            }
+            modeRefreshJob = launched
+            launched.start()
+        }
+    }
+
+    fun launchFootModeChange(
+        ctx: Context,
+        mode: FootMode,
+        requested: FootModeValue
+    ) {
+        require(requested != FootModeValue.UNKNOWN)
+        val app = ctx.applicationContext
+        val target = SelectedFootRepository.current(app)
+        FootModeRepo.syncTarget(target?.address)
+        if (target == null) return
+        val token = FootModeRepo.beginIntent(target.address, mode, requested)
+
+        synchronized(modeJobGuard) {
+            val previous = modeJobs[mode]
+            lateinit var launched: Job
+            launched = userScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    previous?.cancelAndJoin()
+                    runFootModeIntent(app, target, token)
+                } finally {
+                    synchronized(modeJobGuard) {
+                        if (modeJobs[mode] === launched) modeJobs.remove(mode)
+                    }
+                }
+            }
+            modeJobs[mode] = launched
+            previous?.cancel()
+            launched.start()
+        }
+    }
+
+    fun cancelPendingFootModeOperations() {
+        synchronized(modeJobGuard) {
+            modeRefreshJob?.cancel()
+            modeRefreshJob = null
+            modeJobs.values.forEach(Job::cancel)
+            modeJobs.clear()
+        }
     }
 
     suspend fun checkNow(ctx: Context, origin: CheckOrigin): FootOperationResult {
@@ -358,6 +432,241 @@ object FootOperations {
             )
         }
         return finishCoordinated(app, coordinated)
+    }
+
+    private suspend fun refreshFootModes(ctx: Context, target: SelectedFoot) {
+        modeExecutionPrerequisiteError(ctx, target)?.let {
+            FootModeRepo.failRefresh(target.address, it)
+            return
+        }
+        val coordinated = try {
+            BleOperationCoordinator.tryRun(BleOperationKind.FOOT_MODES_REFRESH) {
+                if (SelectedFootRepository.current(ctx)?.address != target.address) {
+                    return@tryRun ModeSessionExecution.Failed("Selected foot changed")
+                }
+                val live = LiveConnection.readySession()
+                when {
+                    live != null -> {
+                        refreshFootModesOnSession(target, live)
+                        ModeSessionExecution.Success(Unit)
+                    }
+                    !LiveConnection.canUseTemporarySession() ->
+                        ModeSessionExecution.Failed("Bluetooth connection is not ready")
+                    else -> withTemporaryFootModeSession(ctx, target) { session ->
+                        refreshFootModesOnSession(target, session)
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            FootModeRepo.failRefresh(target.address, e.message ?: "Foot mode check failed")
+            return
+        }
+
+        when (coordinated) {
+            is CoordinatedResult.Completed -> when (val result = coordinated.value) {
+                is ModeSessionExecution.Success -> Unit
+                is ModeSessionExecution.Failed ->
+                    FootModeRepo.failRefresh(target.address, result.message)
+            }
+            CoordinatedResult.Busy ->
+                FootModeRepo.failRefresh(target.address, "Another foot action is in progress")
+        }
+    }
+
+    private suspend fun refreshFootModesOnSession(
+        target: SelectedFoot,
+        session: FootGattSession
+    ) {
+        FootModeRefresh.execute(
+            transport = object : FootModeRefreshTransport {
+                override suspend fun query(mode: FootMode): FootModeCommandExchangeResult =
+                    session.queryFootMode(mode)
+            },
+            onResult = { read ->
+                FootModeRepo.applyQuery(target.address, read)
+                debugFootMode(
+                    "FOOT_MODE_VERIFY ${read.mode.name} ${read.value?.name ?: "UNKNOWN"}"
+                )
+            }
+        )
+    }
+
+    private suspend fun runFootModeIntent(
+        ctx: Context,
+        target: SelectedFoot,
+        token: FootModeIntentToken
+    ) {
+        FootModeOneShotRetry().run(
+            stillCurrent = {
+                FootModeRepo.isCurrent(token) &&
+                    SelectedFootRepository.selected.value?.address == token.targetAddress
+            },
+            publishSecondsRemaining = {
+                FootModeRepo.updateRetrySeconds(token, it)
+            },
+            onRetryScheduled = {
+                debugFootMode(
+                    "FOOT_MODE_RETRY ${token.mode.name} ${token.requested.name} scheduled"
+                )
+                FootModeRepo.beginRetry(token)
+            },
+            onRetryStarting = {
+                FootModeRepo.beginRetryAttempt(token)
+            },
+            attempt = {
+                performFootModeAttempt(ctx, target, token).also { result ->
+                    when (result) {
+                        is FootModeMutationAttemptResult.Transaction -> {
+                            FootModeRepo.applyMutation(token, result.read)
+                            debugFootMode(
+                                "FOOT_MODE_VERIFY ${token.mode.name} " +
+                                    (result.read.finalValue?.name ?: "UNKNOWN")
+                            )
+                        }
+                        is FootModeMutationAttemptResult.TransientFailure ->
+                            FootModeRepo.applyTransientFailure(token, result.message)
+                        is FootModeMutationAttemptResult.Rejected ->
+                            FootModeRepo.applyRejectedIntent(token, result.message)
+                        FootModeMutationAttemptResult.Busy ->
+                            FootModeRepo.applyRejectedIntent(
+                                token,
+                                "Another foot action is in progress"
+                            )
+                    }
+                }
+            }
+        )
+    }
+
+    private suspend fun performFootModeAttempt(
+        ctx: Context,
+        target: SelectedFoot,
+        token: FootModeIntentToken
+    ): FootModeMutationAttemptResult {
+        modeMutationPrerequisiteError(ctx, target)?.let {
+            return FootModeMutationAttemptResult.Rejected(it)
+        }
+        val kind = footModeOperationKind(token.mode, token.requested)
+        val coordinated = try {
+            BleOperationCoordinator.runDeviceControl(kind) {
+                if (!FootModeRepo.isCurrent(token) ||
+                    SelectedFootRepository.current(ctx)?.address != target.address
+                ) {
+                    return@runDeviceControl FootModeMutationAttemptResult.Rejected(
+                        "Selected foot changed"
+                    )
+                }
+                val live = LiveConnection.readySession()
+                when {
+                    live != null -> FootModeMutationAttemptResult.Transaction(
+                        live.changeFootMode(token.mode, token.requested)
+                    )
+                    !LiveConnection.canUseTemporarySession() ->
+                        FootModeMutationAttemptResult.TransientFailure(
+                            "Bluetooth connection is not ready"
+                        )
+                    else -> when (val result = withTemporaryFootModeSession(ctx, target) { session ->
+                        FootModeMutationAttemptResult.Transaction(
+                            session.changeFootMode(token.mode, token.requested)
+                        )
+                    }) {
+                        is ModeSessionExecution.Success -> result.value
+                        is ModeSessionExecution.Failed ->
+                            FootModeMutationAttemptResult.TransientFailure(result.message)
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return FootModeMutationAttemptResult.TransientFailure(
+                e.message ?: "Bluetooth operation failed"
+            )
+        }
+        return when (coordinated) {
+            is CoordinatedResult.Completed -> coordinated.value
+            CoordinatedResult.Busy -> FootModeMutationAttemptResult.Busy
+        }
+    }
+
+    private fun footModeOperationKind(
+        mode: FootMode,
+        requested: FootModeValue
+    ): BleOperationKind {
+        require(requested != FootModeValue.UNKNOWN)
+        return when (mode) {
+            FootMode.CHAIR_EXIT -> if (requested == FootModeValue.ON) {
+                BleOperationKind.CHAIR_EXIT_ON
+            } else {
+                BleOperationKind.CHAIR_EXIT_OFF
+            }
+            FootMode.RELAX -> if (requested == FootModeValue.ON) {
+                BleOperationKind.RELAX_ON
+            } else {
+                BleOperationKind.RELAX_OFF
+            }
+        }
+    }
+
+    private sealed interface ModeSessionExecution<out T> {
+        data class Success<T>(val value: T) : ModeSessionExecution<T>
+        data class Failed(val message: String) : ModeSessionExecution<Nothing>
+    }
+
+    private suspend fun <T> withTemporaryFootModeSession(
+        ctx: Context,
+        target: SelectedFoot,
+        block: suspend (FootGattSession) -> T
+    ): ModeSessionExecution<T> {
+        val session = FootGattSession(ctx, target)
+        return try {
+            withTimeout(30_000L) {
+                session.connectAndInitialize()
+                ModeSessionExecution.Success(block(session))
+            }
+        } catch (_: TimeoutCancellationException) {
+            ModeSessionExecution.Failed("Bluetooth transaction timed out")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ModeSessionExecution.Failed(e.message ?: "Bluetooth operation failed")
+        } finally {
+            withContext(NonCancellable) {
+                BleTargetReleaseBarrier.releaseTemporarySession(ctx, session)
+            }
+        }
+    }
+
+    private fun modeExecutionPrerequisiteError(ctx: Context, target: SelectedFoot): String? {
+        modeMutationPrerequisiteError(ctx, target)?.let { return it }
+        if (!LiveConnection.isReady() && !LiveConnection.canUseTemporarySession()) {
+            return "Bluetooth connection is not ready"
+        }
+        return null
+    }
+
+    private fun modeMutationPrerequisiteError(ctx: Context, target: SelectedFoot): String? {
+        if (SelectedFootRepository.current(ctx)?.address != target.address) {
+            return "Selected foot changed"
+        }
+        val permissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!permissionGranted) return "Bluetooth permission is required"
+        val enabled = try {
+            (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager)
+                .adapter?.isEnabled == true
+        } catch (_: Exception) {
+            false
+        }
+        if (!enabled) return "Turn on Bluetooth"
+        return null
+    }
+
+    private fun debugFootMode(message: String) {
+        if (BuildConfig.DEBUG) Log.d(TAG, message)
     }
 
     private suspend fun runAnkleRequest(

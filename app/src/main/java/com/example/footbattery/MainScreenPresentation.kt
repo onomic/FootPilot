@@ -240,11 +240,16 @@ fun mainScreenOperationText(operation: BleOperationKind?): String? = when (opera
     BleOperationKind.NOTIFICATION_CHECK,
     BleOperationKind.SCHEDULED_CHECK,
     BleOperationKind.LIVE_REFRESH -> "Checking..."
+    BleOperationKind.FOOT_MODES_REFRESH -> "Checking foot modes..."
     BleOperationKind.FOOT_VERIFICATION -> "Verifying foot..."
     BleOperationKind.FOOT_SELECTION_CHANGE -> "Updating foot..."
     BleOperationKind.STANDBY_ON -> "Turning standby on..."
     BleOperationKind.STANDBY_OFF -> "Turning standby off..."
     BleOperationKind.STANDBY_TOGGLE -> "Updating standby..."
+    BleOperationKind.CHAIR_EXIT_ON -> "Turning Chair Exit Mode on..."
+    BleOperationKind.CHAIR_EXIT_OFF -> "Turning Chair Exit Mode off..."
+    BleOperationKind.RELAX_ON -> "Turning Relax Mode on..."
+    BleOperationKind.RELAX_OFF -> "Turning Relax Mode off..."
     BleOperationKind.ANKLE_ADJUST -> "Adjusting ankle..."
     BleOperationKind.PRESET_APPLY -> "Applying preset..."
     BleOperationKind.AUTO_ALIGN -> "Automatic alignment"
