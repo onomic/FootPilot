@@ -1,152 +1,185 @@
-# FootPilot
+<div align="center">
+  <img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" alt="FootPilot logo" width="112">
+  <h1>FootPilot</h1>
+  <p>A simple Android companion for checking and controlling a compatible Össur PROPRIO FOOT.</p>
+  <p><strong>Battery alerts&nbsp;&nbsp;·&nbsp;&nbsp;Standby control&nbsp;&nbsp;·&nbsp;&nbsp;Ankle alignment&nbsp;&nbsp;·&nbsp;&nbsp;Footwear presets</strong></p>
+</div>
 
-FootPilot is an Android app for a user-selected Össur Proprio Foot. It reads the standard BLE battery
-level, reports low battery, queries and changes the foot's confirmed standby state, and provides
-foot-authoritative Chair Exit, Relax, and ankle alignment controls. Chair Exit and Relax remain
-compact switches in Settings and are freshly queried from the selected foot. Battery and standby checks are saved as one verified
-snapshot. Ankle position is persisted separately in exact protocol millidegrees with its own
-certainty and verification time. Live battery values can be newer than the complete snapshot; they
-update the gauge and ongoing connection notification without changing the snapshot's `Last checked`
-time.
+> [!IMPORTANT]
+> FootPilot is currently a beta. Ankle movement should always be tested while seated and safely supported. Follow the instructions from your prosthetist and the device manufacturer.
 
-## How the alert works
+## What FootPilot does
 
-The optional **Stay connected** mode keeps one live in-process BLE session open and subscribes to
-battery updates while the app is running. It works with Standby ON or OFF and never changes Standby
-automatically; Standby ON blocks movement, not the connection. Separate WorkManager background
-polling briefly connects, obtains battery and confirmed standby, queries ankle only after fresh
-Standby OFF, then disconnects and removes the bond.
-Low-battery alerts re-arm after charging above the
-configured threshold, so they fire once per discharge rather than repeatedly. Every valid battery
-reading drives this safety behavior even if the accompanying standby check fails; an incomplete
-read does not replace the last complete snapshot.
+FootPilot gives you one place to:
 
-Foot Setup, alert threshold, pairing PIN, polling interval, and polling toggle are available in
-Settings. FootPilot starts with no selected foot, including after an upgrade from beta2. A foot is
-saved only after an exact-name foreground scan and verification of the expected battery and Össur
-GATT profile; the app never shows a general Bluetooth device list. Opening Settings refreshes both
-Foot Modes through one coordinator-owned session without adding work to normal battery checks.
+- Check the foot's battery level and receive a low-battery alert.
+- Keep a live Bluetooth connection when you want faster controls.
+- Turn Standby on or off.
+- Use Chair Exit Mode and Relax Mode.
+- Automatically align the ankle for a different heel height.
+- Fine-tune the ankle in 0.1° steps.
+- Save and recall Barefoot, Running, Dress, and Boots presets.
+- Control commonly used features from the Android notification.
 
-## Getting a runnable app
+FootPilot communicates directly with the selected foot over Bluetooth. The app does not request internet access.
 
-You can't get an APK by just opening these files — Android has to compile them.
-Pick whichever path fits what you have.
+## Install the app
 
-### Option A — GitHub Actions (no dev tools needed)
+FootPilot requires an Android phone running Android 8.0 or newer with Bluetooth Low Energy.
 
-1. Create a new GitHub repo and push this whole folder to it.
-2. Open the **Actions** tab. The "Build APK" workflow runs automatically on push.
-3. When it finishes, open the run and download the **foot-battery-apk** artifact.
-   Unzip it to get `app-debug.apk`.
-4. Copy the APK to your phone and install it (allow "install from unknown sources").
+1. Download the FootPilot APK supplied by the project owner. Published builds will appear on the [Releases page](https://github.com/onomic/FootBattery/releases).
+2. Open the APK on your phone.
+3. If Android blocks the installation, allow **Install unknown apps** for the browser or file manager you used, then try again.
+4. Open FootPilot and allow its Bluetooth, nearby-device, and notification permissions.
 
-### Option B — Android Studio
+Only install APKs obtained from this repository or directly from the project owner.
 
-1. Open this folder, let Gradle sync, plug in your phone with USB debugging on,
-   press **Run** (▶).
+## Set up your foot
 
-## Using it
+<img src="docs/images/footpilot-settings.jpg" alt="FootPilot Settings screen" width="270" align="right">
 
-1. Close any other app connected to the foot — it allows only one connection.
-2. Open FootPilot and go to Settings.
-3. Save the pairing PIN if the foot requires one, enter its advertised Bluetooth name, and tap
-   **Find foot**. FootPilot saves it only after compatibility verification.
-4. Grant Bluetooth, nearby-device, and notification permissions when Android requests them.
-5. Tap **Check now** for an on-demand battery and standby check. Ankle is also queried when the fresh
-   standby result is OFF.
-6. Turn on **Stay connected** when you want FootPilot to keep the BLE connection open for smoother,
-   faster device controls while the app is running. Background polling remains a separate setting.
-7. Once standby has been checked, use the standby switch in the app or notification.
-8. In Settings, use the freshly queried **Chair Exit Mode** and **Relax Mode** switches as needed.
-9. With freshly confirmed standby OFF, fine-adjust by exactly `-0.1°` or `+0.1°`, save the confirmed
-   angle into one of the four fixed footwear presets, recall a configured preset, or start
-   **Auto Alignment**.
+Before starting, turn on Bluetooth and close any other app connected to the foot. The foot can accept only one app connection at a time.
 
-If a standby change is confirmed but its follow-up battery read fails, the confirmed standby state
-is retained across app restarts. The app marks the battery as not yet verified after that change and
-continues to label the preserved timestamp as the last complete check until a full check succeeds.
+1. Open FootPilot and tap the **gear** in the upper-right corner.
+2. Enter the **pairing code** printed on the back of the foot.
+3. Enter the foot's exact Bluetooth name, such as `HF206250`.
+4. Tap **Find foot**.
+5. Wait until the selected foot is shown in green.
+6. Return to the main screen and tap **Check now**.
 
-After Android accepts a standby write, a missing SET confirmation is resolved with a final typed
-QUERY response; delayed SET responses cannot satisfy that query. If the final state still cannot be
-verified, the app persists and displays an ambiguous standby state instead of retaining a potentially
-wrong ON/OFF value. The standby switch and notification standby action stay disabled until **Check
-now** restores a complete confirmed snapshot. Transient operation results remain visible for their
-full display period even when live battery notifications refresh the battery line.
+FootPilot scans only for the exact name you enter and verifies that the selected device is compatible before saving it.
+
+<br clear="right">
+
+## Everyday use
+
+<img src="docs/images/footpilot-home.jpg" alt="FootPilot main screen showing battery, foot controls, and ankle alignment" width="320" align="right">
+
+### Battery and Check now
+
+The large ring shows the latest battery reading. **Last checked** is the time of the most recent complete verified check.
+
+Tap **Check now** whenever you want a fresh battery and Standby status. The ankle position is also checked when Standby is confirmed off. FootPilot connects, checks the foot, updates the screen, and disconnects when a live connection is not being used.
+
+### Stay connected
+
+Turn on **Stay connected** when you want a continuous Bluetooth connection and smoother, faster adjustments. It also keeps the ongoing FootPilot notification available. Turn it off when you no longer need a live session.
+
+### Standby
+
+The **Standby** switch shows the state confirmed by the foot. A fresh check may be required before the switch becomes available. Ankle movement is disabled while Standby is on or its state cannot be verified.
+
+### Status at the top
+
+- **CONNECTED** means Stay connected is active and the foot is ready.
+- **CONNECTING** or **DISCONNECTING** means the live session is changing state.
+- **POLLING** means scheduled background checks are enabled.
+- **IDLE** means there is no live connection or scheduled check running.
+
+<br clear="right">
+
+## Choose the right connection option
+
+| Option | Best for | How it works |
+|---|---|---|
+| **Check now** | A quick update | Connects for one verified check, then disconnects. |
+| **Stay connected** | Ankle adjustments and frequent controls | Keeps one live connection open while FootPilot is running. |
+| **Check in background** | Automatic battery alerts | Briefly connects on a schedule, checks the foot, then disconnects. |
+
+Stay connected and background checking are separate options. You can use either one without enabling the other.
 
 ## Ankle alignment
 
-The protocol's canonical unit is one millidegree (`0.001°`). The supported app range is
-`-2.0°` through `+14.0°`. Fine adjustment computes the next target from the latest confirmed
-foot value by exactly `±100` millidegrees; a step that would cross a bound is disabled rather than
-clamped. There is no slider, arbitrary angle field, or direct picker.
+> [!CAUTION]
+> Sit down and make sure you are safely supported before moving the ankle. Never adjust it while standing, walking, or driving.
 
-Barefoot, Running, Dress, and Boots are a fixed set in that order. Presets begin unconfigured and
-store only a user-saved, foot-confirmed exact angle. Selecting an unconfigured preset does not move
-the foot. Auto Alignment is event-driven and always finishes with an ankle query; its observed
-status bytes (`00`, `1E`, and `3C`) remain opaque, and Auto never overwrites a preset.
+Ankle controls become available only after FootPilot confirms that Standby is off and verifies the current ankle position.
 
-The beta3 UI uses the owner's replacement line-art footwear family. Summary and preset artwork keep
-their native aspect ratios with Fit rendering, so toes, heels, the boot shaft, and Running speed lines
-remain visible at phone and wide-screen widths. The always-dark app uses the centralized FootPilot
-green `#16D13A`; notification accents use the darker `#0B7A1D` on light SystemUI surfaces and
-`#16D13A` in dark mode.
+### Auto align
 
-Every movement path—including notification actions—rechecks Bluetooth/session readiness and
-freshly queries standby at execution time. Movement proceeds only when the foot reports standby
-OFF. A successful Android write is not optimistic confirmation: the final ankle query is
-authoritative. If movement may have occurred but that verification fails, the app records
-`UNKNOWN_AFTER_COMMAND`, displays `Unknown`, and retains any older value only as explicitly labelled
-`Last verified` history until a query restores certainty. Snapshot reads and reconnects query ankle
-truth only after fresh Standby OFF; otherwise any cached angle remains historical and is never
-replayed as current truth. After a process restart, a persisted angle is likewise historical
-until a fresh typed query confirms it. A final foot-confirmed value within one millidegree of the request is
-accepted as the device result; the exact queried value—not the request—is what is stored and shown.
+1. Sit down and place the whole foot flat on the floor, from heel to toe.
+2. Tap **Auto align**.
+3. Keep the foot flat until the second beep.
+4. Lift the foot so the ankle can finish adapting.
+5. Wait for FootPilot to verify and display the confirmed angle.
 
-Quick Adjust is intentionally hidden until verified shoe-height-to-angle calibration is
-configured. No inch conversion is guessed, and notification controls expose no inch adjustment.
+### Fine adjust
 
-The collapsed notification is status-only. In a normal safe state, the expanded notification shows
-the four fixed presets and native actions in the order **Check / Standby / Auto**. Actions are
-revalidated when tapped, so an old rendered notification cannot bypass current standby or connection
-state. Custom notification content is transparent inside Android's native notification surface and
-uses notification-aware text appearances for readability in light and dark system themes.
+Use the **−** and **+** buttons to move the ankle by exactly 0.1° at a time. The confirmed angle shown on screen comes from the foot after the adjustment.
 
-API 34 emulator checks cover approximately 360dp and 785dp app widths plus light/dark collapsed and
-expanded notifications. Physical Samsung/One UI verification remains an owner-run beta check.
+### Save a footwear preset
 
-The physical-validation build identifies itself as `1.2.0-beta3` (`versionCode 4`); the version is
-shown unobtrusively at the bottom of Settings.
+FootPilot includes four fixed presets: **Barefoot**, **Running**, **Dress**, and **Boots**.
 
-## Make background alerts reliable
+1. Tap the footwear preset you want to configure.
+2. Use **Auto align** or **Fine adjust** to reach the comfortable position.
+3. Wait for the angle to be confirmed.
+4. Tap **Save preset**.
 
-Android (especially Samsung/Xiaomi/OnePlus) may kill background Bluetooth to save power,
-which would stop the alerts. To prevent that:
-- Settings → Apps → FootPilot → Battery → **Unrestricted** (or "Don't optimize").
+To use it later, tap the configured preset. A preset with no saved angle selects the slot but does not move the ankle.
 
-Scheduled polling is restored by WorkManager. A **Stay connected** session ends with the app process.
+## Chair Exit Mode and Relax Mode
 
-## Safety
+Open **Settings** to find both foot modes. FootPilot checks their current states when the Settings screen opens.
 
-All proprietary writes go only to AA01, after AA01 and AA02 notification setup, through the existing
-single `FootGattSession` and process-wide operation coordinator. The complete allowlist is:
+- Use each switch to request the mode's on or off state.
+- Wait for the operation to finish before changing another control.
+- Use these modes only as instructed by your prosthetist or the device documentation.
 
-- query standby, set standby ON, and set standby OFF;
-- query Relax Mode and set its absolute ON/OFF state;
-- query Chair Exit Mode and set its absolute ON/OFF state;
-- query ankle;
-- set an absolute ankle target encoded as signed little-endian `Int32` millidegrees; and
-- start Auto Alignment with `B2 B0 04 00`.
+## Battery alerts and background checks
 
-No commands are written to AA02 or any other proprietary characteristic. Arbitrary proprietary
-writes and out-of-range firmware experiments are unsupported. `B2 B0 04 02` is deliberately not
-sent because its semantics are unknown.
+In **Settings**, you can choose when and how often FootPilot checks the battery:
 
-Software tests, lint, builds, and emulator review do not validate physical movement. Initial device
-testing must be seated, safely supported, and follow the hardware checklist in `PROJECT_NOTES.md`;
-never test movement while walking or driving.
+- Set the alert threshold from **5% to 50%** in 5% steps.
+- Turn on **Check in background**.
+- Choose **15 minutes**, **30 minutes**, **1 hour**, or **2 hours**.
 
-## Version notes
+FootPilot alerts once when the battery drops below your chosen threshold. The alert automatically becomes ready again after the foot is charged above the threshold.
 
-If the GitHub build complains about a missing SDK platform, the runner image usually has
-android-34 already; the `setup-android` step accepts licenses.
-Pinned: AGP 8.5.0, Gradle 8.7, Kotlin 1.9.24, compileSdk 34, Compose BOM 2024.06.00.
+For reliable background alerts, open Android's app settings for FootPilot and set battery usage to **Unrestricted** or **Don't optimize**. The exact wording varies by phone manufacturer.
+
+## Notification controls
+
+When Stay connected or background checking is active, FootPilot shows an ongoing notification with the latest battery and foot status. Expand it to access available controls:
+
+- Saved footwear presets
+- **Check**
+- **Standby**
+- **Auto**
+
+Controls appear only when FootPilot can safely verify the required device state. During automatic alignment, the notification also reminds you when to keep the foot flat and when to lift it.
+
+## Troubleshooting
+
+### FootPilot cannot find the foot
+
+- Confirm that Bluetooth is on.
+- Enter the exact Bluetooth name shown by the foot.
+- Close the Össur app or any other app that may already be connected.
+- Keep the foot awake, charged, and close to the phone.
+- Confirm that FootPilot has Bluetooth and nearby-device permission.
+
+### Pairing fails
+
+- Re-enter the numeric pairing code from the back of the foot.
+- Remove the selected foot in Settings, then use **Find foot** again.
+
+### A control is unavailable
+
+- Tap **Check now** and wait for a verified result.
+- Make sure Standby is off before using ankle controls.
+- Wait for any current connection or adjustment to finish.
+- Turn on **Stay connected** if you are making several adjustments.
+
+### Background alerts do not arrive
+
+- Allow notifications for FootPilot.
+- Confirm that **Check in background** is on.
+- Set FootPilot's Android battery usage to **Unrestricted** or **Don't optimize**.
+- Make sure Bluetooth remains enabled.
+
+## Safety and project status
+
+FootPilot is an independent, experimental companion app and is not a replacement for professional fitting, the manufacturer's instructions, or the manufacturer's official software. Physical movement has not been validated by automated software tests. Use ankle and mode controls only when seated, safely supported, and able to stop immediately if the foot behaves unexpectedly.
+
+Current beta build: **1.2.0-beta3**
