@@ -107,9 +107,11 @@ neutral. The `Battery` label is not recolored.
 > update replaces the original **FOOT MODES** placeholders with foot-authoritative Chair Exit and
 > Relax switches. Background polling and notification actions remain separate and unchanged.
 
-> **FootPilot beta3 update:** The visible product name is now FootPilot while the repository,
-> `com.example.footbattery` application ID, namespace, Kotlin packages, and notification action
-> strings remain unchanged for upgrade compatibility. The build is `1.3.0-beta1` (`versionCode 5`).
+> **FootPilot Android identity update:** The repository is `onomic/FootPilot`, the visible product
+> name is FootPilot, and the application ID, namespace, Kotlin packages, and notification action
+> prefix are now `com.onomic.footpilot`. This is intentionally a new Android application identity,
+> not an in-place upgrade of builds using the former application ID. New installs start with clean
+> app-private state. The build remains `1.3.0-beta1` (`versionCode 5`).
 > Settings begins with one compact Foot Setup card containing the existing pairing code and an
 > exact-name **Find foot** action. Fresh installs and beta2 upgrades have no selected target; there
 > is no hard-coded or automatic migration of an old device name/address and no Bluetooth results
@@ -294,7 +296,7 @@ and has full authority over design decisions, including ones that touch the devi
 ## 4. Tech stack & build config
 
 - **Language/UI:** Kotlin + Jetpack Compose + Material 3
-- **Package:** `com.example.footbattery`
+- **Package:** `com.onomic.footpilot`
 - **SDKs:** `compileSdk 34`, `targetSdk 34`, `minSdk 26`
 - **Plugins/versions:** AGP **8.5.0**, Kotlin **1.9.24**, Gradle **8.7**, Compose BOM **2024.06.00**,
   Compose compiler ext **1.5.14**
@@ -318,7 +320,7 @@ and has full authority over design decisions, including ones that touch the devi
 
 ## 5. Current file inventory
 
-All Kotlin under `app/src/main/java/com/example/footbattery/`:
+All Kotlin under `app/src/main/java/com/onomic/footpilot/`:
 
 | File | Role | Notes |
 |---|---|---|

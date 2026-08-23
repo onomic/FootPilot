@@ -27,7 +27,7 @@ FootPilot communicates directly with the selected foot over Bluetooth. The app d
 
 FootPilot requires an Android phone running Android 8.0 or newer with Bluetooth Low Energy.
 
-1. Download the FootPilot APK supplied by the project owner. Published builds will appear on the [Releases page](https://github.com/onomic/FootBattery/releases).
+1. Download the FootPilot APK supplied by the project owner. Published builds will appear on the [Releases page](https://github.com/onomic/FootPilot/releases).
 2. Open the APK on your phone.
 3. If Android blocks the installation, allow **Install unknown apps** for the browser or file manager you used, then try again.
 4. Open FootPilot and allow its Bluetooth, nearby-device, and notification permissions.

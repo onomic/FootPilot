@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.footbattery"
+    namespace = "com.onomic.footpilot"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.footbattery"
+        applicationId = "com.onomic.footpilot"
         minSdk = 26
         targetSdk = 34
         versionCode = 5
