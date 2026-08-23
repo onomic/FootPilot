@@ -209,12 +209,13 @@ data class MainScreenPresentation(
             verificationMessage: String?,
             standbyStatus: String?,
             generalStatus: String?,
-            retrySecondsRemaining: Int? = null
+            retrySecondsRemaining: Int? = null,
+            standbyRetrySecondsRemaining: Int? = null
         ): MainScreenPresentation {
             val candidates = listOf(
                 MainScreenStatusKind.ACTIVE_OPERATION to activeOperationText,
                 MainScreenStatusKind.RETRY_WAIT to
-                    liveRetryStatusText(retrySecondsRemaining),
+                    retryStatusText(retrySecondsRemaining, standbyRetrySecondsRemaining),
                 MainScreenStatusKind.VERIFICATION_WARNING to verificationMessage,
                 MainScreenStatusKind.STANDBY_STATUS to standbyStatus,
                 MainScreenStatusKind.GENERAL_STATUS to generalStatus
@@ -232,6 +233,16 @@ data class MainScreenPresentation(
 
 fun liveRetryStatusText(secondsRemaining: Int?): String? =
     secondsRemaining?.takeIf { it > 0 }?.let { "Retrying in ${it}s..." }
+
+fun standbyRetryStatusText(secondsRemaining: Int?): String? =
+    secondsRemaining?.takeIf { it > 0 }?.let { "Retrying standby in ${it}s..." }
+
+/** A direct control retry wins when independent live and Standby waits briefly overlap. */
+fun retryStatusText(
+    liveSecondsRemaining: Int?,
+    standbySecondsRemaining: Int?
+): String? = standbyRetryStatusText(standbySecondsRemaining)
+    ?: liveRetryStatusText(liveSecondsRemaining)
 
 /** Maps coordinated work to restrained main-screen operation wording. */
 fun mainScreenOperationText(operation: BleOperationKind?): String? = when (operation) {

@@ -35,7 +35,6 @@
             android:layout_marginStart="5dp"
             android:ellipsize="end"
             android:maxLines="1"
-            android:textColor="@color/footbattery_green_notification"
             android:textSize="22sp"
             android:textStyle="bold"
             tools:text="93%" />

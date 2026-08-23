@@ -29,6 +29,13 @@ fun notificationColorApplication(apiLevel: Int): RemoteColorApplication =
         RemoteColorApplication.RESOLVED_FALLBACK
     }
 
+fun notificationBatteryColorResource(level: Int?): Int = when (batteryVisualBand(level)) {
+    BatteryVisualBand.UNKNOWN -> R.color.footbattery_icon_neutral
+    BatteryVisualBand.NORMAL -> R.color.footbattery_green_notification
+    BatteryVisualBand.WARNING -> R.color.footbattery_warning_notification
+    BatteryVisualBand.CRITICAL -> R.color.footbattery_critical_notification
+}
+
 /** Centralized verified-snapshot notifications and low-battery alerts. */
 object Alerts {
     const val ONGOING_CH = "monitor"
@@ -73,11 +80,12 @@ object Alerts {
         BatteryRepo.ensureInitialized(ctx)
         AnkleRepo.ensureInitialized(ctx)
         PresetRepository.ensureInitialized(ctx)
+        val resolvedStatus = resolvedNotificationOperationText(statusText)
         val notification = buildStateNotification(
             ctx = ctx,
             ongoing = true,
-            statusText = statusText,
-            includeActions = statusText == null && actionsAreSafe(ctx),
+            statusText = resolvedStatus,
+            includeActions = resolvedStatus == null && actionsAreSafe(ctx),
             liveBatteryLevel = BatteryRepo.level.value
         )
         ctx.getSystemService(NotificationManager::class.java).notify(ONGOING_ID, notification)
@@ -97,11 +105,12 @@ object Alerts {
         BatteryRepo.ensureInitialized(ctx)
         AnkleRepo.ensureInitialized(ctx)
         PresetRepository.ensureInitialized(ctx)
+        val resolvedStatus = resolvedNotificationOperationText(null)
         val notification = buildStateNotification(
             ctx = ctx,
             ongoing = true,
-            statusText = null,
-            includeActions = actionsAreSafe(ctx),
+            statusText = resolvedStatus,
+            includeActions = resolvedStatus == null && actionsAreSafe(ctx),
             liveBatteryLevel = null
         )
         ctx.getSystemService(NotificationManager::class.java).notify(POLL_STATUS_ID, notification)
@@ -192,10 +201,20 @@ object Alerts {
     ): StateNotificationModel = NotificationStatePresentation.create(
         snapshot = BatteryRepo.snapshot.value,
         liveBatteryLevel = liveBatteryLevel,
-        activeOperationText = BleOperationCoordinator.state.value.visibleOperation?.statusText,
+        activeOperationText = resolvedNotificationOperationText(null),
         transientText = transientStatus.visibleText(nowMs),
         actionsSafe = actionsAreSafe(ctx)
     )
+
+    private fun resolvedNotificationOperationText(explicitText: String?): String? {
+        val active = BleOperationCoordinator.state.value.visibleOperation
+        return if (active != null) {
+            explicitText ?: active.statusText
+        } else {
+            standbyRetryNotificationText(BatteryRepo.standbyRetrySecondsRemaining.value)
+                ?: explicitText
+        }
+    }
 
     private fun postApplicable(ctx: Context, statusText: String?, includeActions: Boolean) {
         when {
@@ -245,6 +264,11 @@ object Alerts {
         val collapsed = RemoteViews(ctx.packageName, R.layout.notification_state_collapsed).apply {
             setTextViewText(R.id.notification_collapsed_battery_label, content.batteryLabel)
             setTextViewText(R.id.notification_collapsed_battery_value, content.batteryValue)
+            setBatteryValueColor(
+                ctx,
+                R.id.notification_collapsed_battery_value,
+                content.batteryLevel
+            )
             setTextViewText(R.id.notification_collapsed_status, content.collapsedText)
         }
         val autoVisible = ankle.operation in setOf(
@@ -257,6 +281,11 @@ object Alerts {
             RemoteViews(ctx.packageName, R.layout.notification_auto).apply {
                 setTextViewText(R.id.notification_auto_battery_label, content.batteryLabel)
                 setTextViewText(R.id.notification_auto_battery_value, content.batteryValue)
+                setBatteryValueColor(
+                    ctx,
+                    R.id.notification_auto_battery_value,
+                    content.batteryLevel
+                )
                 setTextViewText(R.id.notification_auto_title, "Automatic alignment")
                 setTextViewText(
                     R.id.notification_auto_instruction,
@@ -305,6 +334,11 @@ object Alerts {
         val neutralIcon = ContextCompat.getColor(ctx, R.color.footbattery_icon_neutral)
         setTextViewText(R.id.notification_expanded_battery_label, content.batteryLabel)
         setTextViewText(R.id.notification_expanded_battery_value, content.batteryValue)
+        setBatteryValueColor(
+            ctx,
+            R.id.notification_expanded_battery_value,
+            content.batteryLevel
+        )
         setTextViewText(R.id.notification_expanded_standby, content.standbyText)
         setTextViewText(R.id.notification_angle_text, content.angleStatusText)
         if (content.angleStatusConfirmed) {
@@ -466,6 +500,19 @@ object Alerts {
         } else {
             setInt(viewId, methodName, ContextCompat.getColor(ctx, colorResource))
         }
+    }
+
+    private fun RemoteViews.setBatteryValueColor(
+        ctx: Context,
+        viewId: Int,
+        level: Int?
+    ) {
+        setAdaptiveColorResource(
+            ctx,
+            viewId,
+            "setTextColor",
+            notificationBatteryColorResource(level)
+        )
     }
 
     @RequiresApi(Build.VERSION_CODES.S)

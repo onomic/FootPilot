@@ -156,6 +156,7 @@ object SelectedFootRepository {
 
     private fun resetInMemoryDeviceState(hasSelectedFoot: Boolean) {
         FootOperations.cancelPendingFootModeOperations()
+        FootOperations.cancelPendingStandbyOperations()
         BatteryRepo.resetForFootChange(hasSelectedFoot)
         AnkleRepo.resetForFootChange()
         PresetRepository.resetForFootChange()

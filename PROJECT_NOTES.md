@@ -35,6 +35,26 @@ now, notification Check, or scheduled polling. Explicit absolute mutations have 
 automatic retry after the shared 15-second BLE delay; the retry begins with a fresh query and is
 cancelled by newer intent or selected-foot change. Refresh failure never auto-retries.
 
+`BleRetryPolicy` is now the single code-level source for the deliberate automatic retry delay,
+currently `15_000 ms` (15 seconds). Stay connected retries persist while requested; Chair Exit,
+Relax, and Standby controls get at most one safe retry. Standby retry is generation-safe and keeps
+the resolved absolute ON/OFF target, so a notification toggle is never blindly toggled a second
+time after a SET may have reached the foot. A verified Standby result with only a trailing battery
+read failure is complete for control purposes and does not retry. App Check now, notification Check,
+scheduled polling, and Foot Modes Settings refresh remain one-shot. Fine Adjust, preset movement,
+and Auto never blindly resend or restart.
+
+Foot Modes refresh admission now reserves its single job slot before calling `beginRefresh()`.
+Rapid Settings re-entry is therefore a complete no-op while the existing two-query refresh is
+running and cannot reset an already-completed Chair or Relax row to `Checking...`.
+`FootModeStateStore.beginRefresh()` also rejects `CHECKING` as defense in depth.
+
+Battery accents use one fixed semantic classifier: `UNKNOWN`, `NORMAL` (36–100), `WARNING`
+(16–35), and `CRITICAL` (0–15), independent of the configurable alert threshold. The collapsed,
+expanded, and Auto notification battery numbers use the same resolved value and semantic band.
+Normal retains the notification green; warning is `#F5B94A`, critical is `#F0604D`, and unknown is
+neutral. The `Battery` label is not recolored.
+
 > **Live retry and historical-angle correction:** The first user-requested **Stay connected**
 > attempt remains immediate. A genuine persistent connection failure or unexpected loss after
 > READY now enters one fixed 15-second, cancellation-safe retry wait before the same owner coroutine

@@ -119,6 +119,7 @@ class FootModeStateStore(initial: FootModesState = FootModesState()) {
         if (_state.value.targetAddress != targetAddress) resetTargetLocked(targetAddress)
         if (FootMode.entries.any {
                 _state.value.status(it).operation in setOf(
+                    FootModeOperation.CHECKING,
                     FootModeOperation.SETTING,
                     FootModeOperation.RETRY_WAIT
                 )

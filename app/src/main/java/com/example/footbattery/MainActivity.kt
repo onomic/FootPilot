@@ -108,11 +108,11 @@ private val RingTrack = Color(0xFF1A2422)
 
 private val INTERVALS = listOf(15 to "15m", 30 to "30m", 60 to "1h", 120 to "2h")
 
-private fun colorForLevel(level: Int?, normal: Color): Color = when {
-    level == null -> Muted
-    level <= 15 -> Crit
-    level <= 35 -> Warn
-    else -> normal
+private fun colorForLevel(level: Int?, normal: Color): Color = when (batteryVisualBand(level)) {
+    BatteryVisualBand.UNKNOWN -> Muted
+    BatteryVisualBand.NORMAL -> normal
+    BatteryVisualBand.WARNING -> Warn
+    BatteryVisualBand.CRITICAL -> Crit
 }
 
 class MainActivity : ComponentActivity() {
@@ -198,6 +198,8 @@ class MainActivity : ComponentActivity() {
                 val standbyStatus by BatteryRepo.standbyStatus.collectAsState()
                 val connectionState by BatteryRepo.connectionState.collectAsState()
                 val retrySecondsRemaining by BatteryRepo.retrySecondsRemaining.collectAsState()
+                val standbyRetrySecondsRemaining by
+                    BatteryRepo.standbyRetrySecondsRemaining.collectAsState()
                 val coordination by BleOperationCoordinator.state.collectAsState()
                 val ankleState by AnkleRepo.state.collectAsState()
                 val presetState by PresetRepository.state.collectAsState()
@@ -288,6 +290,7 @@ class MainActivity : ComponentActivity() {
                         level = level, status = status, running = running,
                         connectionState = connectionState,
                         retrySecondsRemaining = retrySecondsRemaining,
+                        standbyRetrySecondsRemaining = standbyRetrySecondsRemaining,
                         snapshot = snapshot,
                         standbyStatus = standbyStatus,
                         ankleState = ankleState,
@@ -653,6 +656,7 @@ private fun MainScreen(
     running: Boolean,
     connectionState: LiveConnectionState,
     retrySecondsRemaining: Int?,
+    standbyRetrySecondsRemaining: Int?,
     snapshot: SnapshotState,
     standbyStatus: String,
     ankleState: AnkleState,
@@ -695,7 +699,8 @@ private fun MainScreen(
             verificationMessage = ankleState.message ?: display.verificationMessage,
             standbyStatus = standbyStatus,
             generalStatus = status,
-            retrySecondsRemaining = retrySecondsRemaining
+            retrySecondsRemaining = retrySecondsRemaining,
+            standbyRetrySecondsRemaining = standbyRetrySecondsRemaining
         )
     } else {
         MainScreenPresentation.create(null, null, null, "Add a foot in Settings")

@@ -1,5 +1,18 @@
 package com.example.footbattery
 
+enum class StandbyTransactionFailure {
+    INITIAL_QUERY_WRITE_FAILED,
+    INITIAL_QUERY_RESPONSE_MISSING,
+    INITIAL_QUERY_RESPONSE_INVALID,
+    SET_WRITE_FAILED,
+    FINAL_QUERY_WRITE_FAILED,
+    FINAL_QUERY_RESPONSE_MISSING,
+    FINAL_QUERY_RESPONSE_INVALID,
+    FINAL_STATE_MISMATCH;
+
+    val retryable: Boolean get() = true
+}
+
 data class StandbyTransactionRead(
     val requested: StandbyState,
     val verified: Boolean,
@@ -8,7 +21,8 @@ data class StandbyTransactionRead(
     val ambiguous: Boolean,
     val error: String?,
     val batteryError: String? = null,
-    val setWriteAccepted: Boolean = false
+    val setWriteAccepted: Boolean = false,
+    val failure: StandbyTransactionFailure? = null
 )
 
 sealed interface StandbyCommandExchangeResult {
@@ -53,13 +67,26 @@ object StandbyTransaction {
             StandbyProtocol.queryCommand(),
             StandbyResponseKind.QUERY
         )) {
-            is StandbyCommandExchangeResult.Response -> result.response.state
+            is StandbyCommandExchangeResult.Response -> {
+                if (!StandbyProtocol.matches(result.response, StandbyResponseKind.QUERY) ||
+                    result.response.state == StandbyState.UNKNOWN
+                ) {
+                    return failure(
+                        requested,
+                        StandbyTransactionFailure.INITIAL_QUERY_RESPONSE_INVALID,
+                        "Standby query response did not match"
+                    )
+                }
+                result.response.state
+            }
             is StandbyCommandExchangeResult.WriteFailed -> return failure(
                 requested,
+                StandbyTransactionFailure.INITIAL_QUERY_WRITE_FAILED,
                 "Could not verify standby: ${result.message}"
             )
             is StandbyCommandExchangeResult.ResponseMissing -> return failure(
                 requested,
+                StandbyTransactionFailure.INITIAL_QUERY_RESPONSE_MISSING,
                 "Could not verify standby: ${result.message}"
             )
         }
@@ -75,13 +102,26 @@ object StandbyTransaction {
             StandbyProtocol.queryCommand(),
             StandbyResponseKind.QUERY
         )) {
-            is StandbyCommandExchangeResult.Response -> result.response.state
+            is StandbyCommandExchangeResult.Response -> {
+                if (!StandbyProtocol.matches(result.response, StandbyResponseKind.QUERY) ||
+                    result.response.state == StandbyState.UNKNOWN
+                ) {
+                    return failure(
+                        StandbyState.UNKNOWN,
+                        StandbyTransactionFailure.INITIAL_QUERY_RESPONSE_INVALID,
+                        "Standby query response did not match"
+                    )
+                }
+                result.response.state
+            }
             is StandbyCommandExchangeResult.WriteFailed -> return failure(
                 StandbyState.UNKNOWN,
+                StandbyTransactionFailure.INITIAL_QUERY_WRITE_FAILED,
                 "Could not verify standby: ${result.message}"
             )
             is StandbyCommandExchangeResult.ResponseMissing -> return failure(
                 StandbyState.UNKNOWN,
+                StandbyTransactionFailure.INITIAL_QUERY_RESPONSE_MISSING,
                 "Could not verify standby: ${result.message}"
             )
         }
@@ -90,6 +130,7 @@ object StandbyTransaction {
             StandbyState.OFF -> StandbyState.ON
             StandbyState.UNKNOWN -> return failure(
                 StandbyState.UNKNOWN,
+                StandbyTransactionFailure.INITIAL_QUERY_RESPONSE_INVALID,
                 "Could not verify standby"
             )
         }
@@ -115,6 +156,7 @@ object StandbyTransaction {
                 is StandbyCommandExchangeResult.ResponseMissing -> setWriteAccepted = true
                 is StandbyCommandExchangeResult.WriteFailed -> return failure(
                     requested = requested,
+                    failure = StandbyTransactionFailure.SET_WRITE_FAILED,
                     error = "Standby command write failed: ${result.message}"
                 )
             }
@@ -124,15 +166,31 @@ object StandbyTransaction {
                 StandbyResponseKind.QUERY
             )
             when (finalResult) {
-                is StandbyCommandExchangeResult.Response -> finalResult.response.state
+                is StandbyCommandExchangeResult.Response -> {
+                    if (!StandbyProtocol.matches(
+                            finalResult.response,
+                            StandbyResponseKind.QUERY
+                        ) || finalResult.response.state == StandbyState.UNKNOWN
+                    ) {
+                        return finalQueryFailure(
+                            requested,
+                            setWriteAccepted,
+                            StandbyTransactionFailure.FINAL_QUERY_RESPONSE_INVALID,
+                            "Standby query response did not match"
+                        )
+                    }
+                    finalResult.response.state
+                }
                 is StandbyCommandExchangeResult.WriteFailed -> return finalQueryFailure(
                     requested,
                     setWriteAccepted,
+                    StandbyTransactionFailure.FINAL_QUERY_WRITE_FAILED,
                     finalResult.message
                 )
                 is StandbyCommandExchangeResult.ResponseMissing -> return finalQueryFailure(
                     requested,
                     setWriteAccepted,
+                    StandbyTransactionFailure.FINAL_QUERY_RESPONSE_MISSING,
                     finalResult.message
                 )
             }
@@ -150,12 +208,14 @@ object StandbyTransaction {
             ambiguous = false,
             error = if (verified) null else "Foot remained standby ${finalState.displayName()}",
             batteryError = batteryError,
-            setWriteAccepted = setWriteAccepted
+            setWriteAccepted = setWriteAccepted,
+            failure = if (verified) null else StandbyTransactionFailure.FINAL_STATE_MISMATCH
         )
     }
 
     private fun failure(
         requested: StandbyState,
+        failure: StandbyTransactionFailure,
         error: String
     ) = StandbyTransactionRead(
         requested = requested,
@@ -163,12 +223,14 @@ object StandbyTransaction {
         finalState = null,
         batteryLevel = null,
         ambiguous = false,
-        error = error
+        error = error,
+        failure = failure
     )
 
     private fun finalQueryFailure(
         requested: StandbyState,
         setWriteAccepted: Boolean,
+        failure: StandbyTransactionFailure,
         detail: String
     ) = StandbyTransactionRead(
         requested = requested,
@@ -181,6 +243,7 @@ object StandbyTransaction {
         } else {
             "Final standby verification failed: $detail"
         },
-        setWriteAccepted = setWriteAccepted
+        setWriteAccepted = setWriteAccepted,
+        failure = failure
     )
 }

@@ -2,6 +2,8 @@
 <resources>
     <color name="footbattery_green_app">#16D13A</color>
     <color name="footbattery_green_notification">#0B7A1D</color>
+    <color name="footbattery_warning_notification">#F5B94A</color>
+    <color name="footbattery_critical_notification">#F0604D</color>
     <color name="footbattery_icon_neutral">#5F6368</color>
     <color name="notification_preset_outline">#52000000</color>
     <color name="notification_preset_disabled_outline">#26000000</color>

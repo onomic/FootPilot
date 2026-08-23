@@ -18,6 +18,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
@@ -89,7 +91,9 @@ object FootOperations {
     private val userScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val modeJobGuard = Any()
     private val modeJobs = EnumMap<FootMode, Job>(FootMode::class.java)
-    private var modeRefreshJob: Job? = null
+    private val modeRefreshJobSlot = FootModeRefreshJobSlot<Job>()
+    private val standbyGeneration = StandbyRequestGeneration()
+    private val standbyRequestMutex = Mutex()
 
     fun launchManualCheck(ctx: Context) {
         val app = ctx.applicationContext
@@ -97,8 +101,28 @@ object FootOperations {
     }
 
     fun launchStandbyChange(ctx: Context, requested: StandbyState) {
+        require(requested != StandbyState.UNKNOWN)
         val app = ctx.applicationContext
-        userScope.launch { changeStandby(app, requested) }
+        val target = SelectedFootRepository.current(app)
+        if (target == null) {
+            standbyGeneration.invalidate()
+            userScope.launch {
+                BatteryRepo.ensureInitialized(app)
+                AnkleRepo.ensureInitialized(app)
+                operationFailure(app, "No foot selected")
+            }
+            return
+        }
+        val token = beginStandbyRequest(
+            target,
+            StandbyAttemptRequest.Absolute(requested)
+        )
+        userScope.launch {
+            BatteryRepo.ensureInitialized(app)
+            AnkleRepo.ensureInitialized(app)
+            PresetRepository.ensureInitialized(app)
+            executeStandbyRequest(app, target, token, requireKnownPublicState = true)
+        }
     }
 
     fun launchFineAdjustment(ctx: Context, adjustment: FineAdjustment) {
@@ -121,24 +145,24 @@ object FootOperations {
         val target = SelectedFootRepository.current(app)
         FootModeRepo.syncTarget(target?.address)
         if (target == null) return
-        if (!FootModeRepo.beginRefresh(target.address)) return
-        debugFootMode("FOOT_MODE_REFRESH begin")
-
-        synchronized(modeJobGuard) {
-            if (modeRefreshJob?.isActive == true) return
-            lateinit var launched: Job
-            launched = userScope.launch(start = CoroutineStart.LAZY) {
-                try {
-                    refreshFootModes(app, target)
-                } finally {
-                    synchronized(modeJobGuard) {
-                        if (modeRefreshJob === launched) modeRefreshJob = null
-                    }
+        lateinit var launched: Job
+        modeRefreshJobSlot.tryLaunch(
+            beginRefresh = {
+                FootModeRepo.beginRefresh(target.address).also { admitted ->
+                    if (admitted) debugFootMode("FOOT_MODE_REFRESH begin")
                 }
-            }
-            modeRefreshJob = launched
-            launched.start()
-        }
+            },
+            create = {
+                userScope.launch(start = CoroutineStart.LAZY) {
+                    try {
+                        refreshFootModes(app, target)
+                    } finally {
+                        modeRefreshJobSlot.clearIf(launched)
+                    }
+                }.also { launched = it }
+            },
+            start = Job::start
+        )
     }
 
     fun launchFootModeChange(
@@ -173,12 +197,16 @@ object FootOperations {
     }
 
     fun cancelPendingFootModeOperations() {
+        modeRefreshJobSlot.take()?.cancel()
         synchronized(modeJobGuard) {
-            modeRefreshJob?.cancel()
-            modeRefreshJob = null
             modeJobs.values.forEach(Job::cancel)
             modeJobs.clear()
         }
+    }
+
+    fun cancelPendingStandbyOperations() {
+        standbyGeneration.invalidate()
+        BatteryRepo.standbyRetrySecondsRemaining.value = null
     }
 
     suspend fun checkNow(ctx: Context, origin: CheckOrigin): FootOperationResult {
@@ -261,74 +289,15 @@ object FootOperations {
         BatteryRepo.ensureInitialized(app)
         AnkleRepo.ensureInitialized(app)
         PresetRepository.ensureInitialized(app)
-        executionPrerequisiteError(app)?.let { return operationFailure(app, it) }
-
-        if (BatteryRepo.snapshot.value.standby == StandbyState.UNKNOWN) {
-            val message = if (
-                BatteryRepo.snapshot.value.completeness ==
-                SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND
-            ) {
-                "Check now to restore a confirmed standby state"
-            } else {
-                "Check now to verify standby"
-            }
-            BatteryRepo.standbyStatus.value = message
-            Alerts.refreshApplicable(app, message)
-            return FootOperationResult.Failed(message)
+        val target = SelectedFootRepository.current(app) ?: run {
+            standbyGeneration.invalidate()
+            return operationFailure(app, "No foot selected")
         }
-        if (!LiveConnection.isReady() && !LiveConnection.canUseTemporarySession()) {
-            val message = "Bluetooth connection is not ready"
-            BatteryRepo.status.value = message
-            BatteryRepo.standbyStatus.value = message
-            Alerts.refreshApplicable(app, message)
-            return FootOperationResult.Failed(message)
-        }
-
-        val kind = if (requested == StandbyState.ON) {
-            BleOperationKind.STANDBY_ON
-        } else {
-            BleOperationKind.STANDBY_OFF
-        }
-        val operationText = kind.statusText
-        BatteryRepo.status.value = operationText
-        BatteryRepo.standbyStatus.value = operationText
-        Alerts.showOperation(app, operationText)
-
-        val coordinated = try {
-            BleOperationCoordinator.runStandby(kind) {
-                BatteryRepo.status.value = operationText
-                BatteryRepo.standbyStatus.value = operationText
-                Alerts.showOperation(app, operationText)
-                val live = LiveConnection.readySession()
-                when {
-                    live != null -> changeAndApplyOnSession(app, live, requested)
-                    !LiveConnection.canUseTemporarySession() -> {
-                        val message = "Bluetooth connection is not ready"
-                        BatteryRepo.status.value = message
-                        BatteryRepo.standbyStatus.value = message
-                        FootOperationResult.Failed(message)
-                    }
-                    else -> withTemporarySession(app) { session ->
-                        changeAndApplyOnSession(app, session, requested)
-                    }
-                }
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            val message = e.message ?: "Bluetooth operation failed"
-            BatteryRepo.status.value = message
-            BatteryRepo.standbyStatus.value = message
-            Alerts.refreshApplicable(app, message)
-            return FootOperationResult.Failed(message)
-        }
-
-        return when (coordinated) {
-            is CoordinatedResult.Completed -> coordinated.value.also { result ->
-                Alerts.refreshApplicable(app, result.transientMessage())
-            }
-            CoordinatedResult.Busy -> FootOperationResult.Busy
-        }
+        val token = beginStandbyRequest(
+            target,
+            StandbyAttemptRequest.Absolute(requested)
+        )
+        return executeStandbyRequest(app, target, token, requireKnownPublicState = true)
     }
 
     /** Notification Standby action: target is derived from a fresh query on the acquired session. */
@@ -337,30 +306,253 @@ object FootOperations {
         BatteryRepo.ensureInitialized(app)
         AnkleRepo.ensureInitialized(app)
         PresetRepository.ensureInitialized(app)
-        executionPrerequisiteError(app)?.let { return operationFailure(app, it) }
+        val target = SelectedFootRepository.current(app) ?: run {
+            standbyGeneration.invalidate()
+            return operationFailure(app, "No foot selected")
+        }
+        val token = beginStandbyRequest(target, StandbyAttemptRequest.Toggle)
+        return executeStandbyRequest(app, target, token, requireKnownPublicState = false)
+    }
 
+    private fun beginStandbyRequest(
+        target: SelectedFoot,
+        request: StandbyAttemptRequest
+    ): StandbyRequestToken {
+        BatteryRepo.standbyRetrySecondsRemaining.value = null
+        return standbyGeneration.begin(target.address, request)
+    }
+
+    private suspend fun executeStandbyRequest(
+        ctx: Context,
+        target: SelectedFoot,
+        token: StandbyRequestToken,
+        requireKnownPublicState: Boolean
+    ): FootOperationResult = standbyRequestMutex.withLock {
+        if (!isCurrentStandbyRequest(token)) {
+            return@withLock FootOperationResult.Failed("Standby request superseded")
+        }
+        standbyPrerequisiteError(ctx, target, requireSafeSession = true)?.let {
+            return@withLock operationFailure(ctx, it)
+        }
+        if (requireKnownPublicState && BatteryRepo.snapshot.value.standby == StandbyState.UNKNOWN) {
+            val message = if (
+                BatteryRepo.snapshot.value.completeness ==
+                SnapshotCompleteness.STANDBY_STATE_UNKNOWN_AFTER_COMMAND
+            ) {
+                "Check now to restore a confirmed standby state"
+            } else {
+                "Check now to verify standby"
+            }
+            BatteryRepo.status.value = message
+            BatteryRepo.standbyStatus.value = message
+            Alerts.refreshApplicable(ctx, message)
+            return@withLock FootOperationResult.Failed(message)
+        }
+        runStandbyIntent(ctx, target, token)
+    }
+
+    private suspend fun runStandbyIntent(
+        ctx: Context,
+        target: SelectedFoot,
+        token: StandbyRequestToken
+    ): FootOperationResult {
+        var publishedResult: FootOperationResult? = null
+        val run = try {
+            StandbyOneShotRetry().run(
+                initialRequest = token.initialRequest,
+                stillCurrent = { isCurrentStandbyRequest(token) },
+                publishSecondsRemaining = { seconds ->
+                    if (isCurrentStandbyRequest(token)) {
+                        BatteryRepo.standbyRetrySecondsRemaining.value = seconds
+                    }
+                },
+                onRetryScheduled = { _, _ ->
+                    if (isCurrentStandbyRequest(token)) {
+                        BatteryRepo.status.value = "Retrying standby..."
+                        BatteryRepo.standbyStatus.value = "Retrying standby..."
+                        Alerts.showOperation(ctx, "Retrying standby...")
+                    }
+                },
+                onRetryStarting = {},
+                attempt = { request ->
+                    performStandbyAttempt(ctx, target, token, request).also { result ->
+                        if (isCurrentStandbyRequest(token) && result !is StandbyAttemptResult.Busy) {
+                            publishedResult = applyStandbyAttempt(ctx, result)
+                        }
+                    }
+                }
+            )
+        } catch (e: CancellationException) {
+            if (isCurrentStandbyRequest(token)) {
+                val message = "Standby operation cancelled"
+                BatteryRepo.standbyRetrySecondsRemaining.value = null
+                BatteryRepo.status.value = message
+                BatteryRepo.standbyStatus.value = message
+                Alerts.refreshApplicable(ctx, message)
+            }
+            throw e
+        } finally {
+            if (standbyGeneration.isCurrent(token)) {
+                BatteryRepo.standbyRetrySecondsRemaining.value = null
+            }
+        }
+
+        if (run.superseded) {
+            return publishedResult ?: FootOperationResult.Failed("Standby request superseded")
+        }
+        val result = when (run.finalAttempt) {
+            StandbyAttemptResult.Busy -> FootOperationResult.Busy
+            null -> FootOperationResult.Failed("Standby request superseded")
+            else -> publishedResult ?: FootOperationResult.Failed("Standby operation failed")
+        }
+        if (result !is FootOperationResult.Busy) {
+            Alerts.refreshApplicable(ctx, result.transientMessage())
+        }
+        return result
+    }
+
+    private suspend fun performStandbyAttempt(
+        ctx: Context,
+        target: SelectedFoot,
+        token: StandbyRequestToken,
+        request: StandbyAttemptRequest
+    ): StandbyAttemptResult {
+        standbyPrerequisiteError(ctx, target, requireSafeSession = false)?.let {
+            return StandbyAttemptResult.Rejected(it)
+        }
+        val kind = standbyOperationKind(request)
         val coordinated = try {
-            BleOperationCoordinator.runDeviceControl(BleOperationKind.STANDBY_TOGGLE) {
-                val text = BleOperationKind.STANDBY_TOGGLE.statusText
-                BatteryRepo.status.value = text
-                BatteryRepo.standbyStatus.value = text
-                Alerts.showOperation(app, text)
+            BleOperationCoordinator.runDeviceControl(kind) {
+                if (!isCurrentStandbyRequest(token)) {
+                    return@runDeviceControl StandbyAttemptResult.Rejected(
+                        "Standby request superseded"
+                    )
+                }
+                val operationText = kind.statusText
+                BatteryRepo.status.value = operationText
+                BatteryRepo.standbyStatus.value = operationText
+                Alerts.showOperation(ctx, operationText)
                 val live = LiveConnection.readySession()
                 when {
-                    live != null -> applyStandbyRead(app, live.toggleStandby())
+                    live != null -> executeStandbyOnSession(live, token, request)
                     !LiveConnection.canUseTemporarySession() ->
-                        FootOperationResult.Failed("Bluetooth connection is not ready")
-                    else -> withTemporarySession(app) { session ->
-                        applyStandbyRead(app, session.toggleStandby())
-                    }
+                        StandbyAttemptResult.TransientFailure(
+                            "Bluetooth connection is not ready"
+                        )
+                    else -> withTemporaryStandbySession(ctx, target, token, request)
                 }
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            return operationFailure(app, e.message ?: "Bluetooth operation failed")
+            return StandbyAttemptResult.TransientFailure(
+                e.message ?: "Bluetooth operation failed"
+            )
         }
-        return finishCoordinated(app, coordinated)
+        return when (coordinated) {
+            is CoordinatedResult.Completed -> coordinated.value
+            CoordinatedResult.Busy -> StandbyAttemptResult.Busy
+        }
+    }
+
+    private suspend fun executeStandbyOnSession(
+        session: FootGattSession,
+        token: StandbyRequestToken,
+        request: StandbyAttemptRequest
+    ): StandbyAttemptResult {
+        if (!isCurrentStandbyRequest(token)) {
+            return StandbyAttemptResult.Rejected("Standby request superseded")
+        }
+        val read = when (request) {
+            is StandbyAttemptRequest.Absolute -> session.changeStandby(request.requested)
+            StandbyAttemptRequest.Toggle -> session.toggleStandby()
+        }
+        return StandbyAttemptResult.Transaction(read)
+    }
+
+    private suspend fun withTemporaryStandbySession(
+        ctx: Context,
+        target: SelectedFoot,
+        token: StandbyRequestToken,
+        request: StandbyAttemptRequest
+    ): StandbyAttemptResult {
+        val session = FootGattSession(ctx, target)
+        return try {
+            withTimeout(30_000L) {
+                session.connectAndInitialize()
+                executeStandbyOnSession(session, token, request)
+            }
+        } catch (_: TimeoutCancellationException) {
+            StandbyAttemptResult.TransientFailure("Bluetooth transaction timed out")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            StandbyAttemptResult.TransientFailure(
+                e.message ?: "Bluetooth operation failed"
+            )
+        } finally {
+            withContext(NonCancellable) {
+                BleTargetReleaseBarrier.releaseTemporarySession(ctx, session)
+            }
+        }
+    }
+
+    private fun applyStandbyAttempt(
+        ctx: Context,
+        result: StandbyAttemptResult
+    ): FootOperationResult = when (result) {
+        is StandbyAttemptResult.Transaction -> applyStandbyRead(ctx, result.read)
+        is StandbyAttemptResult.TransientFailure -> standbyFailure(result.message)
+        is StandbyAttemptResult.Rejected -> standbyFailure(result.message)
+        StandbyAttemptResult.Busy -> FootOperationResult.Busy
+    }
+
+    private fun standbyFailure(message: String): FootOperationResult.Failed {
+        BatteryRepo.status.value = message
+        BatteryRepo.standbyStatus.value = message
+        AnkleRepo.fail(message)
+        return FootOperationResult.Failed(message)
+    }
+
+    private fun standbyOperationKind(request: StandbyAttemptRequest): BleOperationKind =
+        when (request) {
+            is StandbyAttemptRequest.Absolute -> if (request.requested == StandbyState.ON) {
+                BleOperationKind.STANDBY_ON
+            } else {
+                BleOperationKind.STANDBY_OFF
+            }
+            StandbyAttemptRequest.Toggle -> BleOperationKind.STANDBY_TOGGLE
+        }
+
+    private fun isCurrentStandbyRequest(token: StandbyRequestToken): Boolean =
+        standbyGeneration.isCurrent(token) &&
+            SelectedFootRepository.selected.value?.address == token.targetAddress
+
+    private fun standbyPrerequisiteError(
+        ctx: Context,
+        target: SelectedFoot,
+        requireSafeSession: Boolean
+    ): String? {
+        if (SelectedFootRepository.current(ctx)?.address != target.address) {
+            return "Selected foot changed"
+        }
+        val permissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!permissionGranted) return "Bluetooth permission is required"
+        val enabled = try {
+            (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager)
+                .adapter?.isEnabled == true
+        } catch (_: Exception) {
+            false
+        }
+        if (!enabled) return "Turn on Bluetooth"
+        if (requireSafeSession &&
+            !LiveConnection.isReady() && !LiveConnection.canUseTemporarySession()
+        ) {
+            return "Bluetooth connection is not ready"
+        }
+        return null
     }
 
     suspend fun adjustFine(
@@ -756,12 +948,6 @@ object FootOperations {
         BatteryRepo.standbyStatus.value = message
         return decision.result
     }
-
-    private suspend fun changeAndApplyOnSession(
-        ctx: Context,
-        session: FootGattSession,
-        requested: StandbyState
-    ): FootOperationResult = applyStandbyRead(ctx, session.changeStandby(requested))
 
     private fun applyStandbyRead(
         ctx: Context,

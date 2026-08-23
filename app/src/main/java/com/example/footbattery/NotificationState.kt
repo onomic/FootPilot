@@ -60,6 +60,7 @@ data class StateNotificationContent(
     val title: String,
     val batteryLabel: String,
     val batteryValue: String,
+    val batteryLevel: Int?,
     val collapsedText: String,
     val standbyText: String,
     val angleSummaryText: String,
@@ -137,6 +138,7 @@ object StateNotificationContentPresentation {
             title = display.batteryLine,
             batteryLabel = "Battery",
             batteryValue = display.batteryLevel?.let { "$it%" } ?: "—",
+            batteryLevel = display.batteryLevel,
             collapsedText = collapsedText,
             standbyText = display.standbyLine,
             angleSummaryText = angleSummary,
@@ -248,3 +250,7 @@ fun liveBatteryRefreshPlan(monitoringRequested: Boolean): LiveBatteryRefreshPlan
         refreshOngoing = monitoringRequested,
         refreshPolling = false
     )
+
+/** Notifications show a stable wait message and are not rebuilt for each countdown tick. */
+fun standbyRetryNotificationText(secondsRemaining: Int?): String? =
+    secondsRemaining?.takeIf { it > 0 }?.let { "Retrying standby..." }

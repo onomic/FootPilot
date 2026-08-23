@@ -27,6 +27,8 @@ object BatteryRepo {
     val connectionState = MutableStateFlow(LiveConnectionState.IDLE)
     /** Whole seconds shown only while a persistent live reconnect is deliberately waiting. */
     val retrySecondsRemaining = MutableStateFlow<Int?>(null)
+    /** Whole seconds shown only while a bounded Standby retry is deliberately waiting. */
+    val standbyRetrySecondsRemaining = MutableStateFlow<Int?>(null)
     val systemLink = MutableStateFlow("")
 
     fun ensureInitialized(ctx: Context) {
@@ -57,6 +59,7 @@ object BatteryRepo {
         running.value = false
         connectionState.value = LiveConnectionState.IDLE
         retrySecondsRemaining.value = null
+        standbyRetrySecondsRemaining.value = null
         systemLink.value = ""
     }
 

@@ -263,6 +263,43 @@ class MainScreenPresentationTest {
         assertEquals("Retrying in 1s...", liveRetryStatusText(1))
     }
 
+    @Test fun standbyRetryUsesDistinctWordingAndTheSameStatusPriority() {
+        val presentation = MainScreenPresentation.create(
+            activeOperationText = null,
+            verificationMessage = "Verification warning",
+            standbyStatus = "Standby status",
+            generalStatus = "General status",
+            standbyRetrySecondsRemaining = BleRetryPolicy.retryDelaySeconds
+        )
+
+        assertEquals("Retrying standby in 15s...", presentation.statusText)
+        assertEquals(MainScreenStatusKind.RETRY_WAIT, presentation.statusKind)
+        assertEquals("Retrying standby in 1s...", standbyRetryStatusText(1))
+    }
+
+    @Test fun activeOperationOutranksStandbyRetryAndOnlyOneCountdownIsRendered() {
+        val active = MainScreenPresentation.create(
+            activeOperationText = "Turning standby off...",
+            verificationMessage = null,
+            standbyStatus = null,
+            generalStatus = null,
+            retrySecondsRemaining = 9,
+            standbyRetrySecondsRemaining = 8
+        )
+        val overlappingWaits = MainScreenPresentation.create(
+            activeOperationText = null,
+            verificationMessage = null,
+            standbyStatus = null,
+            generalStatus = null,
+            retrySecondsRemaining = 9,
+            standbyRetrySecondsRemaining = 8
+        )
+
+        assertEquals("Turning standby off...", active.statusText)
+        assertEquals("Retrying standby in 8s...", overlappingWaits.statusText)
+        assertFalse(overlappingWaits.statusText.contains("Retrying in 9s"))
+    }
+
     @Test fun nullRetryCountdownIsAbsentAndKeepsExistingPriority() {
         val presentation = MainScreenPresentation.create(
             activeOperationText = null,

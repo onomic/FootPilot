@@ -9,7 +9,7 @@ import org.junit.Test
 
 class FootModeRetryTest {
     @Test fun modeRetryUsesSharedFifteenSecondCodeSetting() {
-        assertEquals(15, LIVE_RETRY_DELAY_SECONDS)
+        assertEquals(15, BleRetryPolicy.retryDelaySeconds)
     }
 
     @Test fun transientFailureSchedulesExactlyOneRetryWithoutRealDelay() = runBlocking {
@@ -37,7 +37,8 @@ class FootModeRetryTest {
         assertEquals(listOf(1, 2), attempts)
         assertEquals(1, scheduled)
         assertEquals(1, starting)
-        val expectedSeconds: List<Int?> = (LIVE_RETRY_DELAY_SECONDS downTo 1).toList() + null
+        val expectedSeconds: List<Int?> =
+            (BleRetryPolicy.retryDelaySeconds downTo 1).toList() + null
         assertEquals(expectedSeconds, seconds)
     }
 

@@ -19,6 +19,44 @@ interface FootModeRefreshTransport {
 
 data class FootModesRefreshRead(val results: Map<FootMode, FootModeQueryRead>)
 
+/**
+ * Atomically reserves one refresh job before its presentation state is mutated. Identity-aware
+ * clearing prevents an older job's completion from releasing a newer reservation.
+ */
+internal class FootModeRefreshJobSlot<T : Any> {
+    private val guard = Any()
+    private var current: T? = null
+
+    fun tryLaunch(
+        beginRefresh: () -> Boolean,
+        create: () -> T,
+        start: (T) -> Unit
+    ): Boolean = synchronized(guard) {
+        if (current != null || !beginRefresh()) return@synchronized false
+        val launched = create()
+        current = launched
+        try {
+            start(launched)
+        } catch (error: Throwable) {
+            if (current === launched) current = null
+            throw error
+        }
+        true
+    }
+
+    fun clearIf(candidate: T): Boolean = synchronized(guard) {
+        if (current !== candidate) return@synchronized false
+        current = null
+        true
+    }
+
+    fun take(): T? = synchronized(guard) {
+        current.also { current = null }
+    }
+
+    fun isReserved(): Boolean = synchronized(guard) { current != null }
+}
+
 /** Two independent queries on one caller-owned session; no battery or ankle work is part of it. */
 object FootModeRefresh {
     val queryOrder = listOf(FootMode.CHAIR_EXIT, FootMode.RELAX)

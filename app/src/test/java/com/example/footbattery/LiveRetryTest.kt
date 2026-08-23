@@ -11,7 +11,8 @@ import org.junit.Test
 
 class LiveRetryTest {
     @Test fun retryIntervalIsFixedAtFifteenSeconds() {
-        assertEquals(15, LIVE_RETRY_DELAY_SECONDS)
+        assertEquals(15_000L, BleRetryPolicy.RETRY_DELAY_MS)
+        assertEquals(15, BleRetryPolicy.retryDelaySeconds)
     }
 
     @Test fun selectedFootResetClearsRetryCountdownState() {
@@ -76,7 +77,7 @@ class LiveRetryTest {
 
         assertEquals(
             listOf("attempt-1") +
-                (LIVE_RETRY_DELAY_SECONDS downTo 1).map { "retry-$it" } +
+                (BleRetryPolicy.retryDelaySeconds downTo 1).map { "retry-$it" } +
                 "attempt-2",
             events
         )
@@ -91,7 +92,8 @@ class LiveRetryTest {
         )
 
         assertTrue(completed)
-        val expected = (LIVE_RETRY_DELAY_SECONDS downTo 1).map { it as Int? }.toMutableList()
+        val expected = mutableListOf<Int?>()
+        expected.addAll(BleRetryPolicy.retryDelaySeconds downTo 1)
         expected += null
         assertEquals(expected, published)
     }
@@ -188,7 +190,7 @@ class LiveRetryTest {
                 stillRequested = { true },
                 publishSecondsRemaining = {
                     published += it
-                    if (it == LIVE_RETRY_DELAY_SECONDS) firstSecondPublished.complete(Unit)
+                    if (it == BleRetryPolicy.retryDelaySeconds) firstSecondPublished.complete(Unit)
                 }
             )
         }
@@ -196,7 +198,7 @@ class LiveRetryTest {
         firstSecondPublished.await()
         job.cancelAndJoin()
 
-        assertEquals(listOf(LIVE_RETRY_DELAY_SECONDS, null), published)
+        assertEquals(listOf(BleRetryPolicy.retryDelaySeconds, null), published)
     }
 
     @Test fun generationChangeStopsCountdownAndClearsState() = runBlocking {

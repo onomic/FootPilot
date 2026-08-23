@@ -22,8 +22,13 @@ data class FootModeRetryRunResult(
 
 /** Runs one immediate attempt and at most one delayed retry through the shared BLE countdown. */
 internal class FootModeOneShotRetry(
-    private val countdown: LiveRetryCountdown = LiveRetryCountdown()
+    private val countdown: LiveRetryCountdown = LiveRetryCountdown(),
+    private val retryLimit: Int = BleRetryPolicy.ONE_SHOT_CONTROL_RETRIES
 ) {
+    init {
+        require(retryLimit >= 0)
+    }
+
     suspend fun run(
         stillCurrent: () -> Boolean,
         publishSecondsRemaining: (Int?) -> Unit,
@@ -32,19 +37,21 @@ internal class FootModeOneShotRetry(
         attempt: suspend () -> FootModeMutationAttemptResult
     ): FootModeRetryRunResult {
         if (!stillCurrent()) return FootModeRetryRunResult(null, 0, superseded = true)
-        val first = attempt()
-        if (!first.isRetryable()) {
-            return FootModeRetryRunResult(first, 1, superseded = false)
-        }
+        var attempts = 1
+        var result = attempt()
+        var retries = 0
+        while (result.isRetryable() && retries < retryLimit) {
+            onRetryScheduled(result)
+            val retry = countdown.awaitRetry(stillCurrent, publishSecondsRemaining)
+            if (!retry || !stillCurrent()) {
+                return FootModeRetryRunResult(result, attempts, superseded = true)
+            }
 
-        onRetryScheduled(first)
-        val retry = countdown.awaitRetry(stillCurrent, publishSecondsRemaining)
-        if (!retry || !stillCurrent()) {
-            return FootModeRetryRunResult(first, 1, superseded = true)
+            onRetryStarting()
+            result = attempt()
+            attempts++
+            retries++
         }
-
-        onRetryStarting()
-        val second = attempt()
-        return FootModeRetryRunResult(second, 2, superseded = false)
+        return FootModeRetryRunResult(result, attempts, superseded = false)
     }
 }

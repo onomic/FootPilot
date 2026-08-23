@@ -155,6 +155,7 @@ class StandbyTransactionTest {
         assertEquals(StandbyState.OFF, result.finalState)
         assertEquals(78, result.batteryLevel)
         assertEquals("Foot remained standby off", result.error)
+        assertEquals(StandbyTransactionFailure.FINAL_STATE_MISMATCH, result.failure)
         assertEquals(1, transport.batteryReads)
     }
 
@@ -178,6 +179,10 @@ class StandbyTransactionTest {
             "Standby not confirmed: state could not be verified after command",
             result.error
         )
+        assertEquals(
+            StandbyTransactionFailure.FINAL_QUERY_RESPONSE_MISSING,
+            result.failure
+        )
     }
 
     @Test fun rejectedSetWritePreservesNonAmbiguousFailure() = runBlocking {
@@ -195,6 +200,7 @@ class StandbyTransactionTest {
         assertEquals(null, result.finalState)
         assertEquals(0, transport.batteryReads)
         assertTrue(result.error.orEmpty().startsWith("Standby command write failed"))
+        assertEquals(StandbyTransactionFailure.SET_WRITE_FAILED, result.failure)
     }
 
     @Test fun setGattCallbackFailureIsAWriteFailureNotAmbiguity() = runBlocking {
@@ -213,6 +219,7 @@ class StandbyTransactionTest {
             "Standby command write failed: Bluetooth operation failed (133)",
             result.error
         )
+        assertEquals(StandbyTransactionFailure.SET_WRITE_FAILED, result.failure)
     }
 
     @Test fun knownFinalStateWithBatteryFailureIsStillReturned() = runBlocking {
@@ -230,7 +237,37 @@ class StandbyTransactionTest {
         assertEquals(StandbyState.OFF, result.finalState)
         assertEquals(null, result.batteryLevel)
         assertEquals("Battery check failed", result.batteryError)
+        assertEquals(StandbyTransactionFailure.FINAL_STATE_MISMATCH, result.failure)
         assertEquals(1, transport.batteryReads)
+    }
+
+    @Test fun initialQueryFailuresExposeTypedRetryMetadataAndUnresolvedToggleTarget() = runBlocking {
+        val explicit = StandbyTransaction.execute(
+            StandbyState.ON,
+            FakeTransport(
+                exchangeSteps = listOf(
+                    result(StandbyCommandExchangeResult.WriteFailed("write failed"))
+                )
+            )
+        )
+        val toggle = StandbyTransaction.executeToggle(
+            FakeTransport(
+                exchangeSteps = listOf(
+                    result(StandbyCommandExchangeResult.ResponseMissing("response missing"))
+                )
+            )
+        )
+
+        assertEquals(StandbyState.ON, explicit.requested)
+        assertEquals(
+            StandbyTransactionFailure.INITIAL_QUERY_WRITE_FAILED,
+            explicit.failure
+        )
+        assertEquals(StandbyState.UNKNOWN, toggle.requested)
+        assertEquals(
+            StandbyTransactionFailure.INITIAL_QUERY_RESPONSE_MISSING,
+            toggle.failure
+        )
     }
 
     private sealed interface ExchangeStep {
