@@ -152,8 +152,9 @@ class FullSnapshotTransactionTest {
         assertNull(state.confirmedMd)
         assertEquals(4499, state.lastVerifiedMd)
         assertEquals(100L, state.lastVerifiedAt)
-        assertEquals("Unknown", display.angleText)
-        assertTrue(display.historicalText.orEmpty().startsWith("Last verified"))
+        assertEquals("+4.5°", display.angleText)
+        assertEquals("Last verified +4.5°", display.statusText)
+        assertNull(display.historicalText)
         assertFalse(display.isCurrentConfirmed)
     }
 
