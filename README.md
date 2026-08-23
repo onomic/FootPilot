@@ -188,4 +188,4 @@ Controls appear only when FootPilot can safely verify the required device state.
 
 FootPilot is an independent, experimental companion app and is not a replacement for professional fitting, the manufacturer's instructions, or the manufacturer's official software. Physical movement has not been validated by automated software tests. Use ankle and mode controls only when seated, safely supported, and able to stop immediately if the foot behaves unexpectedly.
 
-Current beta build: **1.2.0-beta3**
+Current beta build: **1.3.0-beta1**

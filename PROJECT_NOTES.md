@@ -109,7 +109,7 @@ neutral. The `Battery` label is not recolored.
 
 > **FootPilot beta3 update:** The visible product name is now FootPilot while the repository,
 > `com.example.footbattery` application ID, namespace, Kotlin packages, and notification action
-> strings remain unchanged for upgrade compatibility. The build is `1.2.0-beta3` (`versionCode 4`).
+> strings remain unchanged for upgrade compatibility. The build is `1.3.0-beta1` (`versionCode 5`).
 > Settings begins with one compact Foot Setup card containing the existing pairing code and an
 > exact-name **Find foot** action. Fresh installs and beta2 upgrades have no selected target; there
 > is no hard-coded or automatic migration of an old device name/address and no Bluetooth results

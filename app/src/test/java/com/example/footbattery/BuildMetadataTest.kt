@@ -7,8 +7,8 @@ import java.io.File
 
 class BuildMetadataTest {
     @Test fun physicalValidationBuildUsesBetaVersionMetadata() {
-        assertEquals("1.2.0-beta3", BuildConfig.VERSION_NAME)
-        assertEquals(4, BuildConfig.VERSION_CODE)
+        assertEquals("1.3.0-beta1", BuildConfig.VERSION_NAME)
+        assertEquals(5, BuildConfig.VERSION_CODE)
         assertEquals("com.example.footbattery", BuildConfig.APPLICATION_ID)
     }
 
