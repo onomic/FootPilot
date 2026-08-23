@@ -152,14 +152,15 @@ class MainScreenPresentationTest {
     }
 
     @Test fun failedRunningConnectionResolvesToConnecting() {
-        assertEquals(
-            MainScreenMode.CONNECTING,
-            mainScreenModePresentation(
-                running = true,
-                connectionState = LiveConnectionState.FAILED,
-                pollingEnabled = false
-            ).mode
+        val presentation = mainScreenModePresentation(
+            running = true,
+            connectionState = LiveConnectionState.FAILED,
+            pollingEnabled = false
         )
+
+        assertEquals(MainScreenMode.CONNECTING, presentation.mode)
+        assertEquals("CONNECTING", presentation.label)
+        assertTrue(presentation.pulses)
     }
 
     @Test fun connectingPresentationPulses() {
@@ -236,11 +237,49 @@ class MainScreenPresentationTest {
             activeOperationText = "Turning standby on...",
             verificationMessage = "Battery not verified after standby change",
             standbyStatus = "Bluetooth connection timed out",
-            generalStatus = "Monitoring"
+            generalStatus = "Monitoring",
+            retrySecondsRemaining = 15
         )
 
         assertEquals("Turning standby on...", presentation.statusText)
         assertEquals(MainScreenStatusKind.ACTIVE_OPERATION, presentation.statusKind)
+    }
+
+    @Test fun retryCountdownOverridesVerificationStandbyAndGeneralStatuses() {
+        val presentation = MainScreenPresentation.create(
+            activeOperationText = null,
+            verificationMessage = "Ankle angle could not be verified",
+            standbyStatus = "Checking standby...",
+            generalStatus = "Bluetooth connection failed",
+            retrySecondsRemaining = 15
+        )
+
+        assertEquals("Retrying in 15s...", presentation.statusText)
+        assertEquals(MainScreenStatusKind.RETRY_WAIT, presentation.statusKind)
+    }
+
+    @Test fun retryCountdownFormatsWholeSecondsExactly() {
+        assertEquals("Retrying in 15s...", liveRetryStatusText(15))
+        assertEquals("Retrying in 1s...", liveRetryStatusText(1))
+    }
+
+    @Test fun nullRetryCountdownIsAbsentAndKeepsExistingPriority() {
+        val presentation = MainScreenPresentation.create(
+            activeOperationText = null,
+            verificationMessage = "Verification warning",
+            standbyStatus = "Standby status",
+            generalStatus = "General status",
+            retrySecondsRemaining = null
+        )
+
+        assertEquals("Verification warning", presentation.statusText)
+        assertEquals(MainScreenStatusKind.VERIFICATION_WARNING, presentation.statusKind)
+        assertEquals(null, liveRetryStatusText(null))
+    }
+
+    @Test fun nonPositiveRetrySecondsAreNotPresented() {
+        assertEquals(null, liveRetryStatusText(0))
+        assertEquals(null, liveRetryStatusText(-1))
     }
 
     @Test fun liveConnectUsesConnectionWideStatusWording() {

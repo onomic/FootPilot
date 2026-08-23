@@ -1,7 +1,11 @@
 package com.example.footbattery
 
+import java.util.Locale
+import kotlin.math.abs
+
 data class AnkleValuePresentation(
     val angleText: String,
+    val angleContentDescription: String,
     val statusText: String,
     val historicalText: String?,
     val isCurrentConfirmed: Boolean,
@@ -16,25 +20,33 @@ object AnklePresentation {
         standby: StandbyState,
         controlsReady: Boolean
     ): AnkleValuePresentation {
-        val confirmed = state.confirmedMd
-        val lastVerified = state.lastVerifiedMd
+        val confirmed = state.confirmedMd?.takeIf(AnkleProtocol::isSupported)
+        val lastVerified = state.lastVerifiedMd?.takeIf(AnkleProtocol::isSupported)
         val blockedByStandby = standby != StandbyState.OFF
         val movementEnabled = controlsReady && !blockedByStandby &&
             state.operation == AnkleOperation.IDLE && confirmed != null
 
         return when {
-            state.certainty == AnkleCertainty.UNKNOWN_AFTER_COMMAND -> AnkleValuePresentation(
-                angleText = "Unknown",
-                statusText = "Angle not verified after command",
-                historicalText = lastVerified?.let { "Last verified ${AnkleProtocol.format(it)}" },
-                isCurrentConfirmed = false,
-                movementEnabled = false,
-                minusEnabled = false,
-                plusEnabled = false
-            )
+            state.certainty == AnkleCertainty.UNKNOWN_AFTER_COMMAND -> {
+                val historicalAngle = lastVerified?.let(AnkleProtocol::format)
+                AnkleValuePresentation(
+                    angleText = historicalAngle ?: "Unknown",
+                    angleContentDescription = lastVerified?.let(::historicalAngleDescription)
+                        ?: "Ankle angle unknown",
+                    statusText = historicalAngle?.let {
+                        "Last verified $it · not verified after adjustment"
+                    } ?: "Angle not verified after adjustment",
+                    historicalText = null,
+                    isCurrentConfirmed = false,
+                    movementEnabled = false,
+                    minusEnabled = false,
+                    plusEnabled = false
+                )
+            }
 
             confirmed != null && blockedByStandby -> AnkleValuePresentation(
                 angleText = AnkleProtocol.format(confirmed),
+                angleContentDescription = historicalAngleDescription(confirmed),
                 statusText = "Last verified ${AnkleProtocol.format(confirmed)}",
                 historicalText = "Movement unavailable while standby is ${standby.displayName()}",
                 isCurrentConfirmed = false,
@@ -45,6 +57,7 @@ object AnklePresentation {
 
             confirmed != null -> AnkleValuePresentation(
                 angleText = AnkleProtocol.format(confirmed),
+                angleContentDescription = confirmedAngleDescription(confirmed),
                 statusText = "Confirmed ${AnkleProtocol.format(confirmed)}",
                 historicalText = null,
                 isCurrentConfirmed = true,
@@ -56,9 +69,10 @@ object AnklePresentation {
             )
 
             lastVerified != null -> AnkleValuePresentation(
-                angleText = "Unknown",
-                statusText = "Ankle angle not currently verified",
-                historicalText = "Last verified ${AnkleProtocol.format(lastVerified)}",
+                angleText = AnkleProtocol.format(lastVerified),
+                angleContentDescription = historicalAngleDescription(lastVerified),
+                statusText = "Last verified ${AnkleProtocol.format(lastVerified)}",
+                historicalText = null,
                 isCurrentConfirmed = false,
                 movementEnabled = false,
                 minusEnabled = false,
@@ -67,6 +81,7 @@ object AnklePresentation {
 
             else -> AnkleValuePresentation(
                 angleText = "Unknown",
+                angleContentDescription = "Ankle angle unknown",
                 statusText = "Check now to verify ankle angle",
                 historicalText = null,
                 isCurrentConfirmed = false,
@@ -76,4 +91,20 @@ object AnklePresentation {
             )
         }
     }
+}
+
+private fun confirmedAngleDescription(millidegrees: Int): String =
+    "Confirmed ankle angle ${spokenAngle(millidegrees)}"
+
+private fun historicalAngleDescription(millidegrees: Int): String =
+    "Last verified ankle angle ${spokenAngle(millidegrees)}, current angle not confirmed"
+
+private fun spokenAngle(millidegrees: Int): String {
+    val magnitude = String.format(Locale.US, "%.1f", abs(millidegrees) / 1_000.0)
+    val signed = when {
+        millidegrees < 0 -> "minus $magnitude"
+        millidegrees > 0 -> "plus $magnitude"
+        else -> magnitude
+    }
+    return "$signed degrees"
 }

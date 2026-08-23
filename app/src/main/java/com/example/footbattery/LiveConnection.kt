@@ -14,10 +14,10 @@ import kotlinx.coroutines.launch
 
 /** Owns the one persistent, fully initialized GATT session used by live monitoring. */
 object LiveConnection {
-    private const val RETRY_DELAY_MS = 5_000L
     private const val TAG = "FootPilotBle"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val retryCountdown = LiveRetryCountdown()
     private val generation = AtomicInteger(0)
     private val jobGuard = Any()
 
@@ -54,6 +54,7 @@ object LiveConnection {
         if (wantConnected) return
         val target = SelectedFootRepository.current(app)
         if (target == null) {
+            BatteryRepo.retrySecondsRemaining.value = null
             BatteryRepo.status.value = "Add a foot in Settings"
             Prefs.setMonitoring(app, false)
             return
@@ -67,6 +68,7 @@ object LiveConnection {
         Prefs.setMonitoring(app, true)
         BatteryRepo.running.value = true
         BatteryRepo.connectionState.value = LiveConnectionState.CONNECTING
+        BatteryRepo.retrySecondsRemaining.value = null
         BatteryRepo.status.value = "Connecting..."
         Alerts.ensureChannels(app)
         Alerts.cancelPollStatus(app)
@@ -78,112 +80,176 @@ object LiveConnection {
         synchronized(jobGuard) {
             if (connectJob?.isActive == true) return
             connectJob = scope.launch {
-                while (wantConnected && generation.get() == expectedGeneration) {
-                    var candidate: FootGattSession? = null
-                    var snapshotResult: FootOperationResult? = null
-                    try {
-                        val coordinated = BleOperationCoordinator.tryRun(BleOperationKind.LIVE_CONNECT) {
-                            if (!wantConnected || generation.get() != expectedGeneration) return@tryRun
-
-                            BleTargetReleaseBarrier.awaitLiveConnectReady(
-                                requireNotNull(appContext),
-                                target
-                            )
-                            if (!wantConnected || generation.get() != expectedGeneration) return@tryRun
-
-                            lateinit var created: FootGattSession
-                            created = FootGattSession(
-                                requireNotNull(appContext),
-                                target,
-                                onBatteryNotification = { level -> handleLiveBattery(created, level) },
-                                onUnexpectedDisconnect = { message ->
-                                    handleUnexpectedDisconnect(
-                                        created,
-                                        message,
-                                        expectedGeneration,
-                                        target
-                                    )
+                try {
+                    runPersistentLiveConnection(
+                        stillRequested = { stillRequested(expectedGeneration, target) },
+                        attempt = { connectOnce(expectedGeneration, target) },
+                        awaitRetry = {
+                            retryCountdown.awaitRetry(
+                                stillRequested = {
+                                    stillRequested(expectedGeneration, target)
+                                },
+                                publishSecondsRemaining = {
+                                    BatteryRepo.retrySecondsRemaining.value = it
                                 }
                             )
-                            candidate = created
-                            session = created
-                            debug("LIVE_CONNECT connect attempt")
-                            created.connectAndInitialize { state ->
-                                if (session === created) {
-                                    BatteryRepo.connectionState.value = state
-                                    BatteryRepo.status.value = when (state) {
-                                        LiveConnectionState.CONNECTING -> "Connecting..."
-                                        LiveConnectionState.DISCOVERING -> "Discovering services..."
-                                        LiveConnectionState.INITIALIZING -> "Initializing foot..."
-                                        else -> BatteryRepo.status.value
-                                    }
-                                    appContext?.let { Alerts.postOngoing(it, BatteryRepo.status.value) }
-                                }
-                            }
-
-                            val origin = if (hasBeenReady) {
-                                CheckOrigin.LIVE_RECONNECT
-                            } else {
-                                CheckOrigin.LIVE_INITIAL
-                            }
-                            BatteryRepo.standbyStatus.value = "Checking standby..."
-                            Alerts.showOperation(requireNotNull(appContext), "Checking...")
-                            snapshotResult = FootOperations.readAndApplyOnSession(
-                                requireNotNull(appContext),
-                                created,
-                                origin
-                            )
-                            created.enableBatteryMonitoring()
-
-                            if (!wantConnected || generation.get() != expectedGeneration) {
-                                throw CancellationException("Monitoring stopped")
-                            }
-                            if (session !== created || !created.isUsable()) {
-                                throw BleSessionException("Foot disconnected during initialization")
-                            }
-                            BatteryRepo.connectionState.value = LiveConnectionState.READY
-                            BatteryRepo.running.value = true
-                            hasBeenReady = true
-                            debug("LIVE_CONNECT READY")
-                            if (BatteryRepo.status.value == "Monitoring" ||
-                                BatteryRepo.status.value == "Checked"
-                            ) {
-                                BatteryRepo.status.value = "Monitoring"
-                            }
                         }
-
-                        if (coordinated is CoordinatedResult.Busy) {
-                            delay(500L)
-                            continue
-                        }
-                        if (!isReady()) {
-                            delay(500L)
-                            continue
-                        }
-                        val transient = when (val result = snapshotResult) {
-                            is FootOperationResult.Partial -> result.message
-                            is FootOperationResult.Failed -> result.message
-                            else -> null
-                        }
-                        Alerts.refreshApplicable(requireNotNull(appContext), transient)
-                        return@launch
-                    } catch (e: CancellationException) {
-                        candidate?.disconnectAndClose(removeBond = false)
-                        if (session === candidate) session = null
-                        throw e
-                    } catch (e: Exception) {
-                        candidate?.disconnectAndClose(removeBond = false)
-                        if (session === candidate) session = null
-                        if (!wantConnected || generation.get() != expectedGeneration) return@launch
-                        BatteryRepo.connectionState.value = LiveConnectionState.FAILED
-                        BatteryRepo.status.value = e.message ?: "Connection failed"
-                        appContext?.let { Alerts.postOngoing(it, "${BatteryRepo.status.value} — retrying") }
-                        delay(RETRY_DELAY_MS)
-                    }
+                    )
+                } finally {
+                    BatteryRepo.retrySecondsRemaining.value = null
                 }
             }
         }
     }
+
+    private suspend fun connectOnce(
+        expectedGeneration: Int,
+        target: SelectedFoot
+    ): LiveConnectionAttemptResult {
+        var candidate: FootGattSession? = null
+        var snapshotResult: FootOperationResult? = null
+        var reachedReady = false
+        val disconnectSignal = LiveDisconnectSignal()
+
+        try {
+            val coordinated = BleOperationCoordinator.tryRun(BleOperationKind.LIVE_CONNECT) {
+                if (!stillRequested(expectedGeneration, target)) return@tryRun
+
+                beginConnectAttempt()
+                BleTargetReleaseBarrier.awaitLiveConnectReady(
+                    requireNotNull(appContext),
+                    target
+                )
+                if (!stillRequested(expectedGeneration, target)) return@tryRun
+
+                lateinit var created: FootGattSession
+                created = FootGattSession(
+                    requireNotNull(appContext),
+                    target,
+                    onBatteryNotification = { level -> handleLiveBattery(created, level) },
+                    onUnexpectedDisconnect = { message ->
+                        handleUnexpectedDisconnect(
+                            created,
+                            message,
+                            expectedGeneration,
+                            target,
+                            disconnectSignal
+                        )
+                    }
+                )
+                candidate = created
+                session = created
+                debug("LIVE_CONNECT connect attempt")
+                created.connectAndInitialize { state ->
+                    if (session === created) {
+                        BatteryRepo.connectionState.value = state
+                        BatteryRepo.status.value = when (state) {
+                            LiveConnectionState.CONNECTING -> "Connecting..."
+                            LiveConnectionState.DISCOVERING -> "Discovering services..."
+                            LiveConnectionState.INITIALIZING -> "Initializing foot..."
+                            else -> BatteryRepo.status.value
+                        }
+                        appContext?.let { Alerts.postOngoing(it, BatteryRepo.status.value) }
+                    }
+                }
+
+                val origin = if (hasBeenReady) {
+                    CheckOrigin.LIVE_RECONNECT
+                } else {
+                    CheckOrigin.LIVE_INITIAL
+                }
+                BatteryRepo.standbyStatus.value = "Checking standby..."
+                Alerts.showOperation(requireNotNull(appContext), "Checking...")
+                snapshotResult = FootOperations.readAndApplyOnSession(
+                    requireNotNull(appContext),
+                    created,
+                    origin
+                )
+                created.enableBatteryMonitoring()
+
+                if (!stillRequested(expectedGeneration, target)) {
+                    throw CancellationException("Monitoring stopped")
+                }
+                if (session !== created || !created.isUsable()) {
+                    throw BleSessionException("Foot disconnected during initialization")
+                }
+                BatteryRepo.retrySecondsRemaining.value = null
+                BatteryRepo.connectionState.value = LiveConnectionState.READY
+                BatteryRepo.running.value = true
+                hasBeenReady = true
+                reachedReady = true
+                debug("LIVE_CONNECT READY")
+                if (BatteryRepo.status.value == "Monitoring" ||
+                    BatteryRepo.status.value == "Checked"
+                ) {
+                    BatteryRepo.status.value = "Monitoring"
+                }
+            }
+
+            if (coordinated is CoordinatedResult.Busy) {
+                return LiveConnectionAttemptResult.Busy
+            }
+            if (!stillRequested(expectedGeneration, target)) {
+                return LiveConnectionAttemptResult.Stopped
+            }
+            if (!reachedReady) {
+                publishConnectAttemptFailure("Connection failed")
+                return LiveConnectionAttemptResult.Failed
+            }
+
+            val transient = when (val result = snapshotResult) {
+                is FootOperationResult.Partial -> result.message
+                is FootOperationResult.Failed -> result.message
+                else -> null
+            }
+            Alerts.refreshApplicable(requireNotNull(appContext), transient)
+            return LiveConnectionAttemptResult.Ready { disconnectSignal.await() }
+        } catch (e: CancellationException) {
+            closeFailedCandidate(candidate)
+            throw e
+        } catch (e: Exception) {
+            closeFailedCandidate(candidate)
+            if (!stillRequested(expectedGeneration, target)) {
+                return LiveConnectionAttemptResult.Stopped
+            }
+            publishConnectAttemptFailure(e.message ?: "Connection failed")
+            return LiveConnectionAttemptResult.Failed
+        }
+    }
+
+    private fun beginConnectAttempt() {
+        BatteryRepo.retrySecondsRemaining.value = null
+        BatteryRepo.running.value = true
+        BatteryRepo.connectionState.value = LiveConnectionState.CONNECTING
+        BatteryRepo.status.value = "Connecting..."
+        appContext?.let { Alerts.postOngoing(it, "Connecting...") }
+    }
+
+    private fun closeFailedCandidate(candidate: FootGattSession?) {
+        if (session === candidate) session = null
+        try {
+            candidate?.disconnectAndClose(removeBond = false)
+        } catch (e: Exception) {
+            debug("LIVE_CONNECT failed candidate cleanup: ${e.message}")
+        }
+    }
+
+    private fun publishPersistentFailure(message: String) {
+        BatteryRepo.connectionState.value = LiveConnectionState.FAILED
+        BatteryRepo.status.value = message
+        appContext?.let { Alerts.postOngoing(it, "$message — retrying") }
+    }
+
+    private fun publishConnectAttemptFailure(message: String) {
+        if (AnkleRepo.state.value.operation == AnkleOperation.QUERYING) {
+            AnkleRepo.fail(message)
+        }
+        publishPersistentFailure(message)
+    }
+
+    private fun stillRequested(expectedGeneration: Int, target: SelectedFoot): Boolean =
+        wantConnected && generation.get() == expectedGeneration && activeTarget == target &&
+            SelectedFootRepository.selected.value == target
 
     private fun handleLiveBattery(owner: FootGattSession, level: Int) {
         if (session !== owner || !wantConnected) return
@@ -201,20 +267,28 @@ object LiveConnection {
         owner: FootGattSession,
         message: String,
         expectedGeneration: Int,
-        target: SelectedFoot
+        target: SelectedFoot,
+        disconnectSignal: LiveDisconnectSignal
     ) {
-        if (session !== owner || !wantConnected || generation.get() != expectedGeneration ||
-            activeTarget != target
-        ) return
-        session = null
-        owner.disconnectAndClose(removeBond = false)
-        BatteryRepo.connectionState.value = LiveConnectionState.FAILED
-        BatteryRepo.status.value = "$message — reconnecting"
-        appContext?.let { Alerts.postOngoing(it, BatteryRepo.status.value) }
-        launchConnectLoop(expectedGeneration, target)
+        val accepted = synchronized(jobGuard) {
+            if (session !== owner || !stillRequested(expectedGeneration, target)) {
+                false
+            } else {
+                session = null
+                true
+            }
+        }
+        if (!accepted) return
+        try {
+            owner.disconnectAndClose(removeBond = false)
+        } finally {
+            publishPersistentFailure(message)
+            disconnectSignal.signal()
+        }
     }
 
     fun stop() {
+        BatteryRepo.retrySecondsRemaining.value = null
         val app = appContext ?: return
         if (!wantConnected && BatteryRepo.connectionState.value == LiveConnectionState.IDLE) return
 
@@ -241,6 +315,7 @@ object LiveConnection {
             activeTarget = null
             BatteryRepo.running.value = false
             BatteryRepo.connectionState.value = LiveConnectionState.IDLE
+            BatteryRepo.retrySecondsRemaining.value = null
             BatteryRepo.status.value = "Disconnected"
             Alerts.cancelOngoing(app)
             if (Prefs.polling(app)) Alerts.updatePollStatus(app)

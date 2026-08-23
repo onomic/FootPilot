@@ -34,19 +34,98 @@ class AnkleStatePresentationTest {
         assertNull(restored.confirmedMd)
     }
 
-    @Test fun unknownAfterCommandRetainsOnlyExplicitHistoricalValue() {
+    @Test fun confirmedAngleUsesCurrentPresentation() {
+        val state = AnkleState(lastVerifiedMd = -400, certainty = AnkleCertainty.CONFIRMED)
+        val display = AnklePresentation.create(state, StandbyState.OFF, controlsReady = true)
+
+        assertEquals("-0.4°", display.angleText)
+        assertEquals("Confirmed -0.4°", display.statusText)
+        assertEquals("Confirmed ankle angle minus 0.4 degrees", display.angleContentDescription)
+        assertTrue(display.isCurrentConfirmed)
+        assertTrue(display.movementEnabled)
+    }
+
+    @Test fun ordinaryHistoricalAngleReplacesUnknownWithMutedValue() {
         val state = AnkleState(
-            lastVerifiedMd = 4499,
+            lastVerifiedMd = -400,
+            lastVerifiedAt = 100L,
+            certainty = AnkleCertainty.UNKNOWN
+        )
+        val display = AnklePresentation.create(state, StandbyState.OFF, controlsReady = true)
+
+        assertEquals("-0.4°", display.angleText)
+        assertEquals("Last verified -0.4°", display.statusText)
+        assertNull(display.historicalText)
+        assertEquals(
+            "Last verified ankle angle minus 0.4 degrees, current angle not confirmed",
+            display.angleContentDescription
+        )
+        assertFalse(display.isCurrentConfirmed)
+        assertHistoricalControlsDisabled(display)
+        assertNull(state.confirmedMd)
+    }
+
+    @Test fun unknownAfterCommandShowsHistoricalValueWithSafetyDistinction() {
+        val state = AnkleState(
+            lastVerifiedMd = -400,
             lastVerifiedAt = 100L,
             certainty = AnkleCertainty.UNKNOWN_AFTER_COMMAND
         )
         val display = AnklePresentation.create(state, StandbyState.OFF, controlsReady = true)
 
-        assertEquals("Unknown", display.angleText)
-        assertEquals("Last verified +4.5°", display.historicalText)
+        assertEquals("-0.4°", display.angleText)
+        assertEquals(
+            "Last verified -0.4° · not verified after adjustment",
+            display.statusText
+        )
+        assertNull(display.historicalText)
         assertFalse(display.isCurrentConfirmed)
-        assertFalse(display.movementEnabled)
+        assertHistoricalControlsDisabled(display)
         assertNull(state.confirmedMd)
+    }
+
+    @Test fun ordinaryUnknownWithoutStoredAngleUsesLiteralUnknown() {
+        val display = AnklePresentation.create(
+            AnkleState(certainty = AnkleCertainty.UNKNOWN),
+            StandbyState.OFF,
+            controlsReady = true
+        )
+
+        assertEquals("Unknown", display.angleText)
+        assertEquals("Ankle angle unknown", display.angleContentDescription)
+        assertHistoricalControlsDisabled(display)
+    }
+
+    @Test fun unknownAfterCommandWithoutStoredAngleUsesLiteralUnknown() {
+        val display = AnklePresentation.create(
+            AnkleState(certainty = AnkleCertainty.UNKNOWN_AFTER_COMMAND),
+            StandbyState.OFF,
+            controlsReady = true
+        )
+
+        assertEquals("Unknown", display.angleText)
+        assertEquals("Angle not verified after adjustment", display.statusText)
+        assertEquals("Ankle angle unknown", display.angleContentDescription)
+        assertHistoricalControlsDisabled(display)
+    }
+
+    @Test fun invalidStoredAngleIsNotPresentedAsKnown() {
+        val display = AnklePresentation.create(
+            AnkleState(lastVerifiedMd = 14_001, certainty = AnkleCertainty.UNKNOWN),
+            StandbyState.OFF,
+            controlsReady = true
+        )
+
+        assertEquals("Unknown", display.angleText)
+    }
+
+    @Test fun historicalAngleCannotEnableSavingOrActivePresetMatching() {
+        val state = AnkleState(lastVerifiedMd = -400, certainty = AnkleCertainty.UNKNOWN)
+        val targets = PresetTargets(runningMd = -400)
+
+        assertNull(state.confirmedMd)
+        assertTrue(targets.activeMatches(state.confirmedMd).isEmpty())
+        assertFalse(state.confirmedMd != null)
     }
 
     @Test fun failedFreshQueryNeverLeavesPersistedValueCurrent() {
@@ -58,10 +137,10 @@ class AnkleStatePresentationTest {
         val display = AnklePresentation.create(state, StandbyState.OFF, controlsReady = true)
 
         assertNull(state.confirmedMd)
-        assertEquals("Unknown", display.angleText)
-        assertEquals("Last verified +4.5°", display.historicalText)
+        assertEquals("+4.5°", display.angleText)
+        assertEquals("Last verified +4.5°", display.statusText)
         assertFalse(display.isCurrentConfirmed)
-        assertFalse(display.movementEnabled)
+        assertHistoricalControlsDisabled(display)
     }
 
     @Test fun unknownAfterCommandStateRemainsUnconfirmedDuringFailedRecovery() {
@@ -73,6 +152,16 @@ class AnkleStatePresentationTest {
 
         assertEquals(AnkleCertainty.UNKNOWN_AFTER_COMMAND, state.certainty)
         assertNull(state.confirmedMd)
+    }
+
+    @Test fun standbyOnKeepsHistoricalValueVisibleAndNonMovable() {
+        val state = AnkleState(lastVerifiedMd = -400, certainty = AnkleCertainty.UNKNOWN)
+        val display = AnklePresentation.create(state, StandbyState.ON, controlsReady = true)
+
+        assertEquals("-0.4°", display.angleText)
+        assertEquals("Last verified -0.4°", display.statusText)
+        assertFalse(display.isCurrentConfirmed)
+        assertHistoricalControlsDisabled(display)
     }
 
     @Test fun standbyOnLabelsKnownAngleLastVerifiedAndDisablesMovement() {
@@ -101,5 +190,11 @@ class AnkleStatePresentationTest {
         assertTrue(low.plusEnabled)
         assertTrue(high.minusEnabled)
         assertFalse(high.plusEnabled)
+    }
+
+    private fun assertHistoricalControlsDisabled(display: AnkleValuePresentation) {
+        assertFalse(display.movementEnabled)
+        assertFalse(display.minusEnabled)
+        assertFalse(display.plusEnabled)
     }
 }

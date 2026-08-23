@@ -86,6 +86,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -192,6 +193,7 @@ class MainActivity : ComponentActivity() {
                 val snapshot by BatteryRepo.snapshot.collectAsState()
                 val standbyStatus by BatteryRepo.standbyStatus.collectAsState()
                 val connectionState by BatteryRepo.connectionState.collectAsState()
+                val retrySecondsRemaining by BatteryRepo.retrySecondsRemaining.collectAsState()
                 val coordination by BleOperationCoordinator.state.collectAsState()
                 val ankleState by AnkleRepo.state.collectAsState()
                 val presetState by PresetRepository.state.collectAsState()
@@ -276,6 +278,7 @@ class MainActivity : ComponentActivity() {
                     MainScreen(
                         level = level, status = status, running = running,
                         connectionState = connectionState,
+                        retrySecondsRemaining = retrySecondsRemaining,
                         snapshot = snapshot,
                         standbyStatus = standbyStatus,
                         ankleState = ankleState,
@@ -630,6 +633,7 @@ private fun MainScreen(
     status: String,
     running: Boolean,
     connectionState: LiveConnectionState,
+    retrySecondsRemaining: Int?,
     snapshot: SnapshotState,
     standbyStatus: String,
     ankleState: AnkleState,
@@ -671,7 +675,8 @@ private fun MainScreen(
             activeOperationText = mainScreenOperationText(operation),
             verificationMessage = ankleState.message ?: display.verificationMessage,
             standbyStatus = standbyStatus,
-            generalStatus = status
+            generalStatus = status,
+            retrySecondsRemaining = retrySecondsRemaining
         )
     } else {
         MainScreenPresentation.create(null, null, null, "Add a foot in Settings")
@@ -1208,7 +1213,10 @@ private fun AnkleAlignmentCard(
                     fontSize = 28.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
-                    maxLines = 1
+                    maxLines = 1,
+                    modifier = Modifier.clearAndSetSemantics {
+                        contentDescription = presentation.angleContentDescription
+                    }
                 )
                 Text("Fine tune alignment", color = Muted, fontSize = 11.sp)
             }

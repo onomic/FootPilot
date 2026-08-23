@@ -1,5 +1,21 @@
 # FootPilot — Project Notes & Handoff
 
+> **Live retry and historical-angle correction:** The first user-requested **Stay connected**
+> attempt remains immediate. A genuine persistent connection failure or unexpected loss after
+> READY now enters one fixed 15-second, cancellation-safe retry wait before the same owner coroutine
+> starts another attempt. The main screen observes dedicated process state and shows
+> `Retrying in 15s...` through `Retrying in 1s...` in its single bottom status slot, below active BLE
+> operation priority and above verification, standby, and general messages. Turning **Stay
+> connected** off cancels the wait immediately; READY, IDLE, a new attempt, target reset, generation
+> change, and coroutine cancellation all clear the countdown. The ongoing notification remains
+> stable during the wait and is not updated once per second.
+>
+> A valid historical ankle value now remains visible as the large Fine Adjust degree value in muted
+> styling when certainty is `UNKNOWN` or `UNKNOWN_AFTER_COMMAND`; `Unknown` is reserved for a state
+> with no valid `lastVerifiedMd`. Concise `Last verified` copy and accessibility semantics identify
+> the value as historical. This is presentation only: `confirmedMd` is unchanged, historical values
+> never enable Fine Adjust, presets, Save, or Auto, and never become movement or active-preset truth.
+
 > **BLE session handoff correction:** Temporary checks and controls now retain the existing
 > process-wide BLE coordinator through an explicit, target-specific release barrier before a new
 > **Stay connected** session may start. The established force-unbond policy remains in temporary
