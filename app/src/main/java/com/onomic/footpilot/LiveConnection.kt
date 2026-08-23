@@ -310,7 +310,10 @@ object LiveConnection {
                 delay(600L)
                 current?.disconnectAndClose(removeBond = false)
                 BleRegistry.closeAll()
-                target?.let { BondHelper.forceUnbond(app, it) }
+                target?.let {
+                    BondHelper.forceUnbond(app, it)
+                    BleInterOperationCooldown.recordReleaseCompleted(it.address)
+                }
             }
             activeTarget = null
             BatteryRepo.running.value = false

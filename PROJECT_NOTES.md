@@ -546,3 +546,13 @@ available in Android's notification framework.
   explicit Disconnect action.
 - The **in-app check is the gold standard** for speed/seamlessness; any background/notification path
   should match its behavior (fast connect → read → unbond-when-monitoring-off).
+
+---
+
+## 13. BLE inter-operation quiet period
+
+- When Stay Connected is off, separate GATT sessions are protected by a target-scoped, silent
+  inter-operation quiet period.
+- The initial policy is 3 seconds from completed release and uses monotonic, process-local timing.
+- This quiet period is distinct from the existing 15-second failure retry and has no retry UI.
+- Commands on an already-ready persistent live session are reused immediately and are not delayed.

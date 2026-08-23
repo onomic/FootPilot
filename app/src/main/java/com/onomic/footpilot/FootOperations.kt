@@ -476,6 +476,10 @@ object FootOperations {
         token: StandbyRequestToken,
         request: StandbyAttemptRequest
     ): StandbyAttemptResult {
+        BleInterOperationCooldown.awaitReady(target.address)
+        if (!isCurrentStandbyRequest(token)) {
+            return StandbyAttemptResult.Rejected("Standby request superseded")
+        }
         val session = FootGattSession(ctx, target)
         return try {
             withTimeout(30_000L) {
@@ -812,6 +816,10 @@ object FootOperations {
         target: SelectedFoot,
         block: suspend (FootGattSession) -> T
     ): ModeSessionExecution<T> {
+        BleInterOperationCooldown.awaitReady(target.address)
+        if (SelectedFootRepository.current(ctx)?.address != target.address) {
+            return ModeSessionExecution.Failed("Selected foot changed")
+        }
         val session = FootGattSession(ctx, target)
         return try {
             withTimeout(30_000L) {
@@ -1096,6 +1104,10 @@ object FootOperations {
     ): FootOperationResult {
         val target = SelectedFootRepository.current(ctx)
             ?: return operationFailure(ctx, "No foot selected")
+        BleInterOperationCooldown.awaitReady(target.address)
+        if (SelectedFootRepository.current(ctx)?.address != target.address) {
+            return operationFailure(ctx, "Selected foot changed")
+        }
         val session = FootGattSession(ctx, target)
         return try {
             val runSession: suspend () -> FootOperationResult = {

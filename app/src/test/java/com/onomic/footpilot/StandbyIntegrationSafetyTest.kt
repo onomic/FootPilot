@@ -61,6 +61,11 @@ class StandbyIntegrationSafetyTest {
         )
 
         assertTrue(temporary.contains("FootGattSession(ctx, target)"))
+        assertTrue(temporary.contains("BleInterOperationCooldown.awaitReady(target.address)"))
+        assertTrue(
+            temporary.indexOf("BleInterOperationCooldown.awaitReady(target.address)") <
+                temporary.indexOf("FootGattSession(ctx, target)")
+        )
         assertTrue(temporary.contains("BleTargetReleaseBarrier.releaseTemporarySession"))
         assertTrue(temporary.contains("withContext(NonCancellable)"))
     }

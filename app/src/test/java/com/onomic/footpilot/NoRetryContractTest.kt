@@ -102,6 +102,18 @@ class NoRetryContractTest {
         )
     }
 
+    @Test fun interOperationCooldownDoesNotPublishOrReuseRetryState() {
+        val cooldown = source(
+            "app/src/main/java/com/onomic/footpilot/BleInterOperationCooldown.kt"
+        )
+
+        assertFalse(cooldown.contains("BleRetryPolicy"))
+        assertFalse(cooldown.contains("LiveRetryCountdown"))
+        assertFalse(cooldown.contains("retrySecondsRemaining"))
+        assertFalse(cooldown.contains("standbyRetrySecondsRemaining"))
+        assertFalse(cooldown.contains("Retrying"))
+    }
+
     private fun String.between(start: String, end: String): String =
         substringAfter(start).substringBefore(end)
 

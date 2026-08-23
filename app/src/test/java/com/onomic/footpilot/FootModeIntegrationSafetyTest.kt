@@ -40,7 +40,13 @@ class FootModeIntegrationSafetyTest {
             .substringBefore("private fun modeExecutionPrerequisiteError")
 
         assertTrue(helper.contains("FootGattSession(ctx, target)"))
+        assertTrue(helper.contains("BleInterOperationCooldown.awaitReady(target.address)"))
+        assertTrue(
+            helper.indexOf("BleInterOperationCooldown.awaitReady(target.address)") <
+                helper.indexOf("FootGattSession(ctx, target)")
+        )
         assertTrue(helper.contains("BleTargetReleaseBarrier.releaseTemporarySession"))
+        assertTrue(helper.contains("withContext(NonCancellable)"))
     }
 
     @Test fun refreshReusesReadySessionOrOneSafeTemporarySessionWithoutRetry() {
