@@ -45,6 +45,43 @@ data class FullSnapshotApplicationDecision(
     val result: FootOperationResult
 )
 
+internal sealed interface StandbyOffAnkleRecoveryResult {
+    data object NotNeeded : StandbyOffAnkleRecoveryResult
+    data class Confirmed(val millidegrees: Int) : StandbyOffAnkleRecoveryResult
+    data object Unconfirmed : StandbyOffAnkleRecoveryResult
+}
+
+/** Queries current ankle truth only for a successful OFF result that still lacks confirmation. */
+internal suspend fun recoverAnkleAfterVerifiedStandbyOff(
+    read: StandbyTransactionRead,
+    confirmedMd: Int?,
+    queryAnkle: suspend () -> AnkleCommandExchangeResult
+): StandbyOffAnkleRecoveryResult {
+    if (!read.verified ||
+        read.finalState != StandbyState.OFF ||
+        confirmedMd != null
+    ) {
+        return StandbyOffAnkleRecoveryResult.NotNeeded
+    }
+
+    val query = try {
+        queryAnkle()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        return StandbyOffAnkleRecoveryResult.Unconfirmed
+    }
+    val response = (query as? AnkleCommandExchangeResult.Response)?.response
+        ?: return StandbyOffAnkleRecoveryResult.Unconfirmed
+    return if (AnkleProtocol.matches(response, AnkleResponseKind.QUERY) &&
+        AnkleProtocol.isSupported(response.millidegrees)
+    ) {
+        StandbyOffAnkleRecoveryResult.Confirmed(response.millidegrees)
+    } else {
+        StandbyOffAnkleRecoveryResult.Unconfirmed
+    }
+}
+
 /** Classifies snapshot completeness separately from whether an ankle query was intentionally skipped. */
 fun classifyFullSnapshotRead(
     previous: SnapshotState,
@@ -88,6 +125,8 @@ private fun partialCheckMessage(read: FullSnapshotRead): String {
 /** Shared high-level transactions for the activity, notification service, worker, and live link. */
 object FootOperations {
     private const val TAG = "FootPilotBle"
+    private const val STANDBY_OFF_ANKLE_UNCONFIRMED =
+        "Standby is off, but the ankle angle could not be verified. Check now to retry."
     private val userScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val modeJobGuard = Any()
     private val modeJobs = EnumMap<FootMode, Job>(FootMode::class.java)
@@ -434,7 +473,7 @@ object FootOperations {
                 Alerts.showOperation(ctx, operationText)
                 val live = LiveConnection.readySession()
                 when {
-                    live != null -> executeStandbyOnSession(live, token, request)
+                    live != null -> executeStandbyOnSession(ctx, live, token, request)
                     !LiveConnection.canUseTemporarySession() ->
                         StandbyAttemptResult.TransientFailure(
                             "Bluetooth connection is not ready"
@@ -456,6 +495,7 @@ object FootOperations {
     }
 
     private suspend fun executeStandbyOnSession(
+        ctx: Context,
         session: FootGattSession,
         token: StandbyRequestToken,
         request: StandbyAttemptRequest
@@ -466,6 +506,17 @@ object FootOperations {
         val read = when (request) {
             is StandbyAttemptRequest.Absolute -> session.changeStandby(request.requested)
             StandbyAttemptRequest.Toggle -> session.toggleStandby()
+        }
+        when (val recovery = recoverAnkleAfterVerifiedStandbyOff(
+            read = read,
+            confirmedMd = AnkleRepo.state.value.confirmedMd,
+            queryAnkle = session::queryAnkleAngle
+        )) {
+            is StandbyOffAnkleRecoveryResult.Confirmed ->
+                AnkleRepo.confirm(ctx, recovery.millidegrees, message = null)
+            StandbyOffAnkleRecoveryResult.Unconfirmed ->
+                AnkleRepo.fail(STANDBY_OFF_ANKLE_UNCONFIRMED)
+            StandbyOffAnkleRecoveryResult.NotNeeded -> Unit
         }
         return StandbyAttemptResult.Transaction(read)
     }
@@ -484,7 +535,7 @@ object FootOperations {
         return try {
             withTimeout(30_000L) {
                 session.connectAndInitialize()
-                executeStandbyOnSession(session, token, request)
+                executeStandbyOnSession(ctx, session, token, request)
             }
         } catch (_: TimeoutCancellationException) {
             StandbyAttemptResult.TransientFailure("Bluetooth transaction timed out")

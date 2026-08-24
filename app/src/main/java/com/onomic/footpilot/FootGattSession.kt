@@ -225,6 +225,15 @@ class FootGattSession(
         StandbyTransaction.executeToggle(standbyTransport())
     }
 
+    /** Query-only ankle truth used by an already-owned session; this never sends a SET. */
+    suspend fun queryAnkleAngle(): AnkleCommandExchangeResult = transactionMutex.withLock {
+        ensureUsable()
+        exchangeAnkle(
+            AnkleProtocol.queryCommand(),
+            AnkleResponseKind.QUERY
+        )
+    }
+
     suspend fun changeAnkle(
         request: AnkleTargetRequest,
         onPotentialMovement: () -> Unit = {}

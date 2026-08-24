@@ -70,6 +70,69 @@ class StandbyIntegrationSafetyTest {
         assertTrue(temporary.contains("withContext(NonCancellable)"))
     }
 
+    @Test fun queryOnlySessionApiUsesTheExistingSerializedAnkleQueryPrimitive() {
+        val session = source("app/src/main/java/com/onomic/footpilot/FootGattSession.kt")
+        val query = session.between(
+            "suspend fun queryAnkleAngle()",
+            "suspend fun changeAnkle("
+        )
+
+        assertTrue(query.contains("transactionMutex.withLock"))
+        assertTrue(query.contains("ensureUsable()"))
+        assertTrue(query.contains("exchangeAnkle("))
+        assertTrue(query.contains("AnkleProtocol.queryCommand()"))
+        assertTrue(query.contains("AnkleResponseKind.QUERY"))
+        assertFalse(query.contains("AnkleProtocol.setCommand"))
+        assertFalse(query.contains("readBattery"))
+        assertFalse(query.contains("StandbyProtocol"))
+    }
+
+    @Test fun absoluteAndNotificationStandbyOffShareOneSameSessionRecoveryPath() {
+        val execution = operations.between(
+            "private suspend fun executeStandbyOnSession(",
+            "private suspend fun withTemporaryStandbySession("
+        )
+
+        assertTrue(execution.contains("session.changeStandby(request.requested)"))
+        assertTrue(execution.contains("session.toggleStandby()"))
+        assertTrue(execution.count("recoverAnkleAfterVerifiedStandbyOff(") == 1)
+        assertTrue(execution.contains("queryAnkle = session::queryAnkleAngle"))
+        assertTrue(execution.contains("AnkleRepo.confirm(ctx, recovery.millidegrees, message = null)"))
+        assertTrue(execution.contains("AnkleRepo.fail(STANDBY_OFF_ANKLE_UNCONFIRMED)"))
+        assertTrue(
+            execution.indexOf("session.toggleStandby()") <
+                execution.indexOf("recoverAnkleAfterVerifiedStandbyOff(")
+        )
+        assertFalse(execution.contains("FootGattSession(ctx"))
+        assertFalse(execution.contains("BleInterOperationCooldown"))
+        assertFalse(execution.contains("readFullSnapshot"))
+        assertFalse(execution.contains("BleOperationCoordinator"))
+        assertFalse(execution.contains("AnkleProtocol.setCommand"))
+    }
+
+    @Test fun recoveryGateRequiresVerifiedOffAndAnUnconfirmedAnkle() {
+        val recovery = operations.between(
+            "internal suspend fun recoverAnkleAfterVerifiedStandbyOff(",
+            "/** Classifies snapshot completeness"
+        )
+
+        assertTrue(recovery.contains("!read.verified"))
+        assertTrue(recovery.contains("read.finalState != StandbyState.OFF"))
+        assertTrue(recovery.contains("confirmedMd != null"))
+        assertTrue(recovery.contains("AnkleProtocol.isSupported(response.millidegrees)"))
+        assertTrue(recovery.count("queryAnkle()") == 1)
+    }
+
+    @Test fun checkNowStillUsesItsExistingFullSnapshotRecovery() {
+        val check = operations.between(
+            "internal suspend fun readAndApplyOnSession(",
+            "private fun applyStandbyRead("
+        )
+
+        assertTrue(check.contains("session.readFullSnapshot()"))
+        assertTrue(check.contains("AnkleRepo.applySnapshotRead(ctx, read)"))
+    }
+
     @Test fun countdownPublishesOnlyProcessStateAndNeverRefreshesNotificationEachSecond() {
         val runner = operations.between(
             "private suspend fun runStandbyIntent(",

@@ -553,6 +553,12 @@ available in Android's notification framework.
 
 - When Stay Connected is off, separate GATT sessions are protected by a target-scoped, silent
   inter-operation quiet period.
-- The initial policy is 3 seconds from completed release and uses monotonic, process-local timing.
+- The policy is now 4 seconds from completed release for physical beta tuning and uses monotonic,
+  process-local timing.
 - This quiet period is distinct from the existing 15-second failure retry and has no retry UI.
 - Commands on an already-ready persistent live session are reused immediately and are not delayed.
+- A verified Standby OFF re-queries an unconfirmed ankle on the same GATT session before temporary
+  release (or while retaining the ready persistent session).
+- Successful ankle re-verification restores current ankle confirmation without Check Now. A failed
+  ankle re-verification preserves the successful Standby OFF result and leaves the ankle safely
+  unconfirmed, with Check Now as the fallback.

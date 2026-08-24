@@ -20,9 +20,9 @@ class BleInterOperationIntegrationSafetyTest {
         source("app/src/main/java/com/onomic/footpilot/LiveConnection.kt")
     }
 
-    @Test fun policyHasOneExplicitThreeSecondMonotonicClockSource() {
-        assertTrue(cooldown.contains("const val QUIET_PERIOD_MS = 3_000L"))
-        assertEquals(1, cooldown.count("3_000L"))
+    @Test fun policyHasOneExplicitFourSecondMonotonicClockSource() {
+        assertTrue(cooldown.contains("const val QUIET_PERIOD_MS = 4_000L"))
+        assertEquals(1, cooldown.count("4_000L"))
         assertTrue(cooldown.contains("SystemClock::elapsedRealtime"))
         assertFalse(cooldown.contains("System.currentTimeMillis"))
     }
@@ -111,12 +111,12 @@ class BleInterOperationIntegrationSafetyTest {
         assertTrue(beforeGenericHelper.contains("live != null -> readAndApplyOnSession"))
         assertTrue(beforeGenericHelper.contains("live != null -> executeStandbyOnSession"))
         assertTrue(beforeGenericHelper.contains("live != null -> ankleAndApplyOnSession"))
-        assertFalse(
-            operations.between(
-                "private suspend fun executeStandbyOnSession(",
-                "private suspend fun withTemporaryStandbySession("
-            ).contains("BleInterOperationCooldown")
+        val sameSessionStandby = operations.between(
+            "private suspend fun executeStandbyOnSession(",
+            "private suspend fun withTemporaryStandbySession("
         )
+        assertTrue(sameSessionStandby.contains("session::queryAnkleAngle"))
+        assertFalse(sameSessionStandby.contains("BleInterOperationCooldown"))
     }
 
     @Test fun quietPeriodIsIndependentFromFailureRetryState() {

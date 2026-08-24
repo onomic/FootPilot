@@ -6,7 +6,7 @@ import kotlinx.coroutines.delay
 
 /** Policy for the silent delay between separate GATT sessions for one foot. */
 object BleInterOperationPolicy {
-    const val QUIET_PERIOD_MS = 3_000L
+    const val QUIET_PERIOD_MS = 4_000L
 }
 
 /**

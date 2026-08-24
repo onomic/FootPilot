@@ -114,6 +114,24 @@ class NoRetryContractTest {
         assertFalse(cooldown.contains("Retrying"))
     }
 
+    @Test fun standbyOffAnkleRecoveryCannotTurnAConfirmedStandbyIntoRetry() {
+        val operations = source("app/src/main/java/com/onomic/footpilot/FootOperations.kt")
+        val recovery = operations.between(
+            "internal suspend fun recoverAnkleAfterVerifiedStandbyOff(",
+            "/** Classifies snapshot completeness"
+        )
+        val execution = operations.between(
+            "private suspend fun executeStandbyOnSession(",
+            "private suspend fun withTemporaryStandbySession("
+        )
+
+        assertFalse(recovery.contains("StandbyOneShotRetry"))
+        assertFalse(recovery.contains("StandbyAttemptResult.TransientFailure"))
+        assertFalse(recovery.contains("LiveRetryCountdown"))
+        assertTrue(execution.contains("return StandbyAttemptResult.Transaction(read)"))
+        assertFalse(execution.contains("StandbyAttemptResult.TransientFailure"))
+    }
+
     private fun String.between(start: String, end: String): String =
         substringAfter(start).substringBefore(end)
 
