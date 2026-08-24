@@ -32,20 +32,23 @@ Opening Settings is the primary synchronization point. One coordinator-owned liv
 reused when available; otherwise one safe temporary session queries Chair Exit and Relax
 sequentially and releases through `BleTargetReleaseBarrier`. Mode queries are not added to Check
 now, notification Check, or scheduled polling. Explicit absolute mutations have one generation-safe
-automatic retry after the shared 15-second BLE delay; the retry begins with a fresh query and is
-cancelled by newer intent or selected-foot change. Refresh failure never auto-retries.
+automatic retry after the shared 10-second BLE delay; the retry begins with a fresh query and is
+cancelled by newer intent or selected-foot change. The read-only Settings refresh also retries once
+after a transient BLE failure, using the same shared countdown and resolving READY-versus-temporary
+ownership again rather than retaining a session across the wait.
 
 `BleRetryPolicy` is now the single code-level source for the deliberate automatic retry delay,
-currently `15_000 ms` (15 seconds). Stay connected retries persist while requested; Chair Exit,
-Relax, and Standby controls get at most one safe retry. Standby retry is generation-safe and keeps
-the resolved absolute ON/OFF target, so a notification toggle is never blindly toggled a second
-time after a SET may have reached the foot. A verified Standby result with only a trailing battery
-read failure is complete for control purposes and does not retry. App Check now, notification Check,
-scheduled polling, and Foot Modes Settings refresh remain one-shot. Fine Adjust, preset movement,
-and Auto never blindly resend or restart.
+currently `10_000 ms` (10 seconds). The global bounded control retry count remains one. Stay
+connected retries persist while requested; Chair Exit, Relax, Standby, and the automatic Settings
+Foot Modes refresh use this same delay, with each bounded control or refresh operation getting at
+most one safe retry. Standby retry is generation-safe and keeps the resolved absolute ON/OFF target,
+so a notification toggle is never blindly toggled a second time after a SET may have reached the
+foot. A verified Standby result with only a trailing battery read failure is complete for control
+purposes and does not retry. App Check now, notification Check, and scheduled polling remain
+one-shot. Fine Adjust, preset movement, and Auto never blindly resend or restart.
 
 Foot Modes refresh admission now reserves its single job slot before calling `beginRefresh()`.
-Rapid Settings re-entry is therefore a complete no-op while the existing two-query refresh is
+Rapid Settings re-entry is therefore a complete no-op while the existing refresh/retry sequence is
 running and cannot reset an already-completed Chair or Relax row to `Checking...`.
 `FootModeStateStore.beginRefresh()` also rejects `CHECKING` as defense in depth.
 
@@ -57,9 +60,9 @@ neutral. The `Battery` label is not recolored.
 
 > **Live retry and historical-angle correction:** The first user-requested **Stay connected**
 > attempt remains immediate. A genuine persistent connection failure or unexpected loss after
-> READY now enters one fixed 15-second, cancellation-safe retry wait before the same owner coroutine
+> READY now enters one fixed 10-second, cancellation-safe retry wait before the same owner coroutine
 > starts another attempt. The main screen observes dedicated process state and shows
-> `Retrying in 15s...` through `Retrying in 1s...` in its single bottom status slot, below active BLE
+> `Retrying in 10s...` through `Retrying in 1s...` in its single bottom status slot, below active BLE
 > operation priority and above verification, standby, and general messages. Turning **Stay
 > connected** off cancels the wait immediately; READY, IDLE, a new attempt, target reset, generation
 > change, and coroutine cancellation all clear the countdown. The ongoing notification remains
@@ -553,10 +556,12 @@ available in Android's notification framework.
 
 - When Stay Connected is off, separate GATT sessions are protected by a target-scoped, silent
   inter-operation quiet period.
-- The policy is now 4 seconds from completed release for physical beta tuning and uses monotonic,
+- The policy is now 5 seconds from completed release for physical beta tuning and uses monotonic,
   process-local timing.
-- This quiet period is distinct from the existing 15-second failure retry and has no retry UI.
+- This quiet period is distinct from the shared 10-second failure retry and has no retry UI.
 - Commands on an already-ready persistent live session are reused immediately and are not delayed.
+- Automatic Settings Foot Modes refresh remains read-only and retries once after a transient failure;
+  its inline countdown uses `LiveRetryCountdown` and the shared `BleRetryPolicy`.
 - A verified Standby OFF re-queries an unconfirmed ankle on the same GATT session before temporary
   release (or while retaining the ready persistent session).
 - Successful ankle re-verification restores current ankle confirmation without Check Now. A failed

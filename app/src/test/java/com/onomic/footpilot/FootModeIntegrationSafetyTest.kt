@@ -36,8 +36,8 @@ class FootModeIntegrationSafetyTest {
 
     @Test fun temporaryModeSessionUsesExistingReleaseBarrier() {
         val source = source("app/src/main/java/com/onomic/footpilot/FootOperations.kt")
-        val helper = source.substringAfter("withTemporaryFootModeSession(")
-            .substringBefore("private fun modeExecutionPrerequisiteError")
+        val helper = source.substringAfter("private suspend fun <T> withTemporaryFootModeSession(")
+            .substringBefore("private fun modeMutationPrerequisiteError")
 
         assertTrue(helper.contains("FootGattSession(ctx, target)"))
         assertTrue(helper.contains("BleInterOperationCooldown.awaitReady(target.address)"))
@@ -49,27 +49,62 @@ class FootModeIntegrationSafetyTest {
         assertTrue(helper.contains("withContext(NonCancellable)"))
     }
 
-    @Test fun refreshReusesReadySessionOrOneSafeTemporarySessionWithoutRetry() {
+    @Test fun everyRefreshAttemptResolvesReadyOrTemporarySessionFresh() {
         val source = source("app/src/main/java/com/onomic/footpilot/FootOperations.kt")
         val refresh = source.substringAfter("private suspend fun refreshFootModes(")
             .substringBefore("private suspend fun runFootModeIntent(")
+        val attempt = refresh.substringAfter("private suspend fun performFootModeRefreshAttempt(")
+            .substringBefore("private suspend fun refreshFootModesOnSession(")
 
-        assertTrue(refresh.contains("LiveConnection.readySession()"))
-        assertTrue(refresh.contains("!LiveConnection.canUseTemporarySession()"))
-        assertTrue(refresh.contains("withTemporaryFootModeSession(ctx, target)"))
-        assertTrue(refresh.contains("refreshFootModesOnSession(target, session)"))
-        assertFalse(refresh.contains("FootModeOneShotRetry"))
+        assertTrue(refresh.contains("FootModeRefreshOneShotRetry"))
+        assertTrue(refresh.contains("attempt = {"))
+        assertTrue(refresh.contains("performFootModeRefreshAttempt(ctx, target)"))
+        assertTrue(attempt.contains("BleOperationCoordinator.tryRun"))
+        assertTrue(attempt.contains("LiveConnection.readySession()"))
+        assertTrue(attempt.contains("!LiveConnection.canUseTemporarySession()"))
+        assertTrue(attempt.contains("withTemporaryFootModeSession(ctx, target)"))
+        assertTrue(attempt.indexOf("LiveConnection.readySession()") <
+            attempt.indexOf("withTemporaryFootModeSession(ctx, target)"))
         assertFalse(refresh.contains("readBattery"))
         assertFalse(refresh.contains("queryAnkle"))
         assertFalse(refresh.contains("changeStandby"))
     }
 
-    @Test fun modeRetryHasNoIndependentDelayLiteral() {
-        val source = source("app/src/main/java/com/onomic/footpilot/FootModeRetry.kt")
+    @Test fun modeRetriesHaveNoIndependentDelayLiteral() {
+        val source = source("app/src/main/java/com/onomic/footpilot/FootModeRetry.kt") +
+            source("app/src/main/java/com/onomic/footpilot/FootModeRefreshRetry.kt")
 
         assertTrue(source.contains("LiveRetryCountdown"))
         assertFalse(source.contains("15_000"))
         assertFalse(source.contains("15000"))
+        assertFalse(source.contains("10_000"))
+        assertFalse(source.contains("10000"))
+    }
+
+    @Test fun refreshRetryRemainsQueryOnlyAndCannotSendModeSetCommands() {
+        val source = source("app/src/main/java/com/onomic/footpilot/FootOperations.kt")
+        val refresh = source.substringAfter("private suspend fun refreshFootModes(")
+            .substringBefore("private suspend fun runFootModeIntent(")
+
+        assertTrue(refresh.contains("session.queryFootMode(mode)"))
+        assertFalse(refresh.contains("session.changeFootMode"))
+        assertFalse(refresh.contains("FootModeProtocol.setCommand"))
+        assertFalse(refresh.contains("FootModeResponseKind.SET"))
+    }
+
+    @Test fun temporaryRefreshRetryCannotBypassInterOperationCooldown() {
+        val source = source("app/src/main/java/com/onomic/footpilot/FootOperations.kt")
+        val attempt = source.substringAfter("private suspend fun performFootModeRefreshAttempt(")
+            .substringBefore("private suspend fun refreshFootModesOnSession(")
+        val helper = source.substringAfter("private suspend fun <T> withTemporaryFootModeSession(")
+            .substringBefore("private fun modeMutationPrerequisiteError")
+
+        assertTrue(attempt.contains("withTemporaryFootModeSession(ctx, target)"))
+        assertTrue(helper.contains("BleInterOperationCooldown.awaitReady(target.address)"))
+        assertTrue(
+            helper.indexOf("BleInterOperationCooldown.awaitReady(target.address)") <
+                helper.indexOf("FootGattSession(ctx, target)")
+        )
     }
 
     @Test fun nonReadyPersistentSessionIsTransientWithoutOpeningTemporaryGatt() {

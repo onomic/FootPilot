@@ -169,16 +169,76 @@ class FootModeStateStore(initial: FootModesState = FootModesState()) {
         var next = _state.value
         FootMode.entries.forEach { mode ->
             val previous = next.status(mode)
-            if (previous.operation == FootModeOperation.CHECKING) {
+            if (previous.operation in setOf(
+                    FootModeOperation.CHECKING,
+                    FootModeOperation.RETRY_WAIT
+                )
+            ) {
                 next = next.withStatus(
                     mode,
                     previous.copy(
                         currentConfirmed = false,
                         operation = FootModeOperation.IDLE,
+                        requested = null,
+                        retrySecondsRemaining = null,
                         message = message
                     )
                 )
             }
+        }
+        _state.value = next
+    }
+
+    fun beginRefreshRetry(targetAddress: String) = synchronized(guard) {
+        if (_state.value.targetAddress != targetAddress) return@synchronized
+        var next = _state.value
+        FootMode.entries.forEach { mode ->
+            val previous = next.status(mode)
+            if (previous.operation != FootModeOperation.CHECKING) return@forEach
+            next = next.withStatus(
+                mode,
+                previous.copy(
+                    currentConfirmed = false,
+                    operation = FootModeOperation.RETRY_WAIT,
+                    requested = null,
+                    retrySecondsRemaining = null,
+                    message = "Not confirmed"
+                )
+            )
+        }
+        _state.value = next
+    }
+
+    fun updateRefreshRetrySeconds(targetAddress: String, seconds: Int?) = synchronized(guard) {
+        if (_state.value.targetAddress != targetAddress) return@synchronized
+        var next = _state.value
+        FootMode.entries.forEach { mode ->
+            val previous = next.status(mode)
+            if (previous.operation != FootModeOperation.RETRY_WAIT) return@forEach
+            next = next.withStatus(
+                mode,
+                previous.copy(retrySecondsRemaining = seconds)
+            )
+        }
+        _state.value = next
+    }
+
+    fun beginRefreshRetryAttempt(targetAddress: String) = synchronized(guard) {
+        if (_state.value.targetAddress != targetAddress) return@synchronized
+        var next = _state.value
+        FootMode.entries.forEach { mode ->
+            val previous = next.status(mode)
+            if (previous.operation != FootModeOperation.RETRY_WAIT) return@forEach
+            next = next.withStatus(
+                mode,
+                previous.copy(
+                    currentConfirmed = false,
+                    operation = FootModeOperation.CHECKING,
+                    requested = null,
+                    retrySecondsRemaining = null,
+                    message = "Checking..."
+                )
+            )
         }
         _state.value = next
     }
@@ -325,6 +385,11 @@ object FootModeRepo {
     fun beginRefresh(targetAddress: String): Boolean = store.beginRefresh(targetAddress)
     fun applyQuery(targetAddress: String, read: FootModeQueryRead) = store.applyQuery(targetAddress, read)
     fun failRefresh(targetAddress: String, message: String) = store.failRefresh(targetAddress, message)
+    fun beginRefreshRetry(targetAddress: String) = store.beginRefreshRetry(targetAddress)
+    fun updateRefreshRetrySeconds(targetAddress: String, seconds: Int?) =
+        store.updateRefreshRetrySeconds(targetAddress, seconds)
+    fun beginRefreshRetryAttempt(targetAddress: String) =
+        store.beginRefreshRetryAttempt(targetAddress)
     fun beginIntent(targetAddress: String, mode: FootMode, requested: FootModeValue) =
         store.beginIntent(targetAddress, mode, requested)
     fun isCurrent(token: FootModeIntentToken): Boolean = store.isCurrent(token)

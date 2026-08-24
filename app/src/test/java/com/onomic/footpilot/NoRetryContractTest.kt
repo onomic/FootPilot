@@ -1,6 +1,7 @@
 package com.onomic.footpilot
 
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -36,16 +37,22 @@ class NoRetryContractTest {
         assertFalse(worker.contains("Result.retry()"))
     }
 
-    @Test fun footModesRefreshRemainsOneShot() {
+    @Test fun footModesRefreshUsesOnlyItsOneBoundedRetryHelper() {
         val operations = source("app/src/main/java/com/onomic/footpilot/FootOperations.kt")
         val refresh = operations.between(
             "private suspend fun refreshFootModes(",
             "private suspend fun runFootModeIntent("
         )
+        val retry = source(
+            "app/src/main/java/com/onomic/footpilot/FootModeRefreshRetry.kt"
+        )
 
-        assertFalse(refresh.contains("OneShotRetry"))
-        assertFalse(refresh.contains("awaitRetry"))
-        assertTrue(refresh.count("refreshFootModesOnSession(target") == 2)
+        assertTrue(refresh.contains("FootModeRefreshOneShotRetry"))
+        assertFalse(refresh.contains("FootModeOneShotRetry"))
+        assertFalse(refresh.contains("LiveRetryCountdown("))
+        assertTrue(retry.contains("LiveRetryCountdown()"))
+        assertTrue(retry.contains("BleRetryPolicy.ONE_SHOT_CONTROL_RETRIES"))
+        assertTrue(retry.contains("countdown.awaitRetry"))
     }
 
     @Test fun finePresetAndAutoPathsContainNoAutomaticCommandRunner() {
@@ -82,10 +89,11 @@ class NoRetryContractTest {
         }
     }
 
-    @Test fun retryParticipantsHaveNoIndependentFifteenSecondDelayLiteral() {
+    @Test fun retryParticipantsHaveNoIndependentGlobalDelayLiteral() {
         val retryParticipants = listOf(
             "app/src/main/java/com/onomic/footpilot/LiveRetry.kt",
             "app/src/main/java/com/onomic/footpilot/LiveConnection.kt",
+            "app/src/main/java/com/onomic/footpilot/FootModeRefreshRetry.kt",
             "app/src/main/java/com/onomic/footpilot/FootModeRetry.kt",
             "app/src/main/java/com/onomic/footpilot/StandbyRetry.kt",
             "app/src/main/java/com/onomic/footpilot/FootOperations.kt"
@@ -95,10 +103,55 @@ class NoRetryContractTest {
             val text = source(path)
             assertFalse("independent retry delay in $path", text.contains("15_000"))
             assertFalse("independent retry delay in $path", text.contains("15000"))
+            assertFalse("independent retry delay in $path", text.contains("10_000"))
+            assertFalse("independent retry delay in $path", text.contains("10000"))
         }
         assertTrue(
             source("app/src/main/java/com/onomic/footpilot/BleRetryPolicy.kt")
-                .contains("RETRY_DELAY_MS = 15_000L")
+                .contains("RETRY_DELAY_MS = 10_000L")
+        )
+    }
+
+    @Test fun everyRetryConsumerUsesTheSharedCountdownAndPolicy() {
+        listOf(
+            "app/src/main/java/com/onomic/footpilot/StandbyRetry.kt",
+            "app/src/main/java/com/onomic/footpilot/FootModeRetry.kt",
+            "app/src/main/java/com/onomic/footpilot/FootModeRefreshRetry.kt"
+        ).forEach { path ->
+            val text = source(path)
+            assertTrue("shared countdown missing from $path", text.contains("LiveRetryCountdown()"))
+            assertTrue(
+                "shared retry count missing from $path",
+                text.contains("BleRetryPolicy.ONE_SHOT_CONTROL_RETRIES")
+            )
+        }
+
+        val live = source("app/src/main/java/com/onomic/footpilot/LiveConnection.kt")
+        assertTrue(live.contains("retryCountdown = LiveRetryCountdown()"))
+    }
+
+    @Test fun productionTimingLiteralsRemainSeparatedByPurpose() {
+        val sourceRoot = listOf(
+            File("app/src/main/java"),
+            File("../app/src/main/java")
+        ).first(File::isDirectory)
+        val kotlinSources = sourceRoot.walkTopDown().filter { it.extension == "kt" }.toList()
+
+        assertEquals(
+            setOf("BleRetryPolicy.kt", "FootSetup.kt"),
+            kotlinSources.filter { it.readText().contains("10_000L") }.map(File::getName).toSet()
+        )
+        assertEquals(
+            listOf("AutoAlignmentTransaction.kt"),
+            kotlinSources.filter { it.readText().contains("15_000L") }.map(File::getName)
+        )
+        assertTrue(
+            source("app/src/main/java/com/onomic/footpilot/AutoAlignmentTransaction.kt")
+                .contains("INACTIVITY_TIMEOUT_MS = 15_000L")
+        )
+        assertTrue(
+            source("app/src/main/java/com/onomic/footpilot/FootSetup.kt")
+                .contains("timeoutMs: Long = 10_000L")
         )
     }
 

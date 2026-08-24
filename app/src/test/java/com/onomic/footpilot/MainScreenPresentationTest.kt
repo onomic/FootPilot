@@ -238,7 +238,7 @@ class MainScreenPresentationTest {
             verificationMessage = "Battery not verified after standby change",
             standbyStatus = "Bluetooth connection timed out",
             generalStatus = "Monitoring",
-            retrySecondsRemaining = 15
+            retrySecondsRemaining = BleRetryPolicy.retryDelaySeconds
         )
 
         assertEquals("Turning standby on...", presentation.statusText)
@@ -251,15 +251,15 @@ class MainScreenPresentationTest {
             verificationMessage = "Ankle angle could not be verified",
             standbyStatus = "Checking standby...",
             generalStatus = "Bluetooth connection failed",
-            retrySecondsRemaining = 15
+            retrySecondsRemaining = BleRetryPolicy.retryDelaySeconds
         )
 
-        assertEquals("Retrying in 15s...", presentation.statusText)
+        assertEquals("Retrying in 10s...", presentation.statusText)
         assertEquals(MainScreenStatusKind.RETRY_WAIT, presentation.statusKind)
     }
 
     @Test fun retryCountdownFormatsWholeSecondsExactly() {
-        assertEquals("Retrying in 15s...", liveRetryStatusText(15))
+        assertEquals("Retrying in 10s...", liveRetryStatusText(BleRetryPolicy.retryDelaySeconds))
         assertEquals("Retrying in 1s...", liveRetryStatusText(1))
     }
 
@@ -272,7 +272,7 @@ class MainScreenPresentationTest {
             standbyRetrySecondsRemaining = BleRetryPolicy.retryDelaySeconds
         )
 
-        assertEquals("Retrying standby in 15s...", presentation.statusText)
+        assertEquals("Retrying standby in 10s...", presentation.statusText)
         assertEquals(MainScreenStatusKind.RETRY_WAIT, presentation.statusKind)
         assertEquals("Retrying standby in 1s...", standbyRetryStatusText(1))
     }

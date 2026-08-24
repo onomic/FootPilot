@@ -10,9 +10,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LiveRetryTest {
-    @Test fun retryIntervalIsFixedAtFifteenSeconds() {
-        assertEquals(15_000L, BleRetryPolicy.RETRY_DELAY_MS)
-        assertEquals(15, BleRetryPolicy.retryDelaySeconds)
+    @Test fun sharedRetryPolicyIsTenSecondsWithOneBoundedControlRetry() {
+        assertEquals(10_000L, BleRetryPolicy.RETRY_DELAY_MS)
+        assertEquals(10, BleRetryPolicy.retryDelaySeconds)
+        assertEquals(1, BleRetryPolicy.ONE_SHOT_CONTROL_RETRIES)
     }
 
     @Test fun selectedFootResetClearsRetryCountdownState() {
@@ -43,7 +44,7 @@ class LiveRetryTest {
         assertEquals(listOf("attempt"), events)
     }
 
-    @Test fun failedAttemptCountsDownFifteenThroughOneBeforeNextAttempt() = runBlocking {
+    @Test fun failedAttemptCountsDownTenThroughOneBeforeNextAttempt() = runBlocking {
         val events = mutableListOf<String>()
         var requested = true
         var attempts = 0
@@ -131,8 +132,8 @@ class LiveRetryTest {
 
         assertEquals("attempt-1", events.first())
         assertEquals("unexpected-disconnect", events[1])
-        assertEquals("retry-15", events[2])
-        assertEquals("retry-1", events[16])
+        assertEquals("retry-${BleRetryPolicy.retryDelaySeconds}", events[2])
+        assertEquals("retry-1", events[events.lastIndex - 1])
         assertEquals("attempt-2", events.last())
     }
 
@@ -218,7 +219,14 @@ class LiveRetryTest {
         )
 
         assertFalse(completed)
-        assertEquals(listOf(15, 14, null), published)
+        assertEquals(
+            listOf(
+                BleRetryPolicy.retryDelaySeconds,
+                BleRetryPolicy.retryDelaySeconds - 1,
+                null
+            ),
+            published
+        )
     }
 
     @Test fun duplicateDisconnectSignalsProduceOneRetryAndOneNextAttempt() = runBlocking {

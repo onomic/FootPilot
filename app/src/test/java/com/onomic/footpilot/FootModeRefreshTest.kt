@@ -3,6 +3,7 @@ package com.onomic.footpilot
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FootModeRefreshTest {
@@ -22,6 +23,7 @@ class FootModeRefreshTest {
         assertEquals(FootModeValue.OFF, result.results[FootMode.RELAX]?.value)
         assertEquals(FootMode.CHAIR_EXIT, delivered[0].mode)
         assertEquals(FootMode.RELAX, delivered[1].mode)
+        assertEquals(FootModeRefreshAttemptResult.Success, result.toAttemptResult())
     }
 
     @Test fun oneModeFailureDoesNotPreventTheOtherQuery() = runBlocking {
@@ -53,6 +55,25 @@ class FootModeRefreshTest {
             FootModeQueryFailure.INVALID_RESPONSE,
             result.results[FootMode.CHAIR_EXIT]?.failure
         )
+        assertTrue(result.toAttemptResult() is FootModeRefreshAttemptResult.TransientFailure)
+    }
+
+    @Test fun writeAndMissingResponseFailuresAreTransientRefreshOutcomes() = runBlocking {
+        listOf(
+            FootModeCommandExchangeResult.WriteFailed("write failed"),
+            FootModeCommandExchangeResult.ResponseMissing("response timed out")
+        ).forEach { failure ->
+            val result = FootModeRefresh.execute(
+                FakeRefreshTransport(
+                    mapOf(
+                        FootMode.CHAIR_EXIT to failure,
+                        FootMode.RELAX to response(FootMode.RELAX, FootModeValue.OFF)
+                    )
+                )
+            )
+
+            assertTrue(result.toAttemptResult() is FootModeRefreshAttemptResult.TransientFailure)
+        }
     }
 
     private class FakeRefreshTransport(

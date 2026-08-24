@@ -25,15 +25,15 @@ class BleInterOperationCooldownTest {
         assertEquals(BleInterOperationPolicy.QUIET_PERIOD_MS, fixture.cooldown.remainingMs(footA))
     }
 
-    @Test fun twelveHundredMillisecondsElapsedLeavesTwentyEightHundred() {
+    @Test fun twelveHundredMillisecondsElapsedLeavesThirtyEightHundred() {
         val fixture = Fixture(nowMs = 1_000L)
         fixture.cooldown.recordReleaseCompleted(footA)
         fixture.nowMs += 1_200L
 
-        assertEquals(2_800L, fixture.cooldown.remainingMs(footA))
+        assertEquals(3_800L, fixture.cooldown.remainingMs(footA))
     }
 
-    @Test fun exactlyFourSecondsElapsedIsReady() {
+    @Test fun exactlyFiveSecondsElapsedIsReady() {
         val fixture = Fixture(nowMs = 1_000L)
         fixture.cooldown.recordReleaseCompleted(footA)
         fixture.nowMs += BleInterOperationPolicy.QUIET_PERIOD_MS
@@ -42,7 +42,7 @@ class BleInterOperationCooldownTest {
         assertTrue(fixture.cooldown.isReady(footA))
     }
 
-    @Test fun moreThanFourSecondsElapsedIsReady() {
+    @Test fun moreThanFiveSecondsElapsedIsReady() {
         val fixture = Fixture(nowMs = 1_000L)
         fixture.cooldown.recordReleaseCompleted(footA)
         fixture.nowMs += BleInterOperationPolicy.QUIET_PERIOD_MS + 1_000L
@@ -76,15 +76,15 @@ class BleInterOperationCooldownTest {
         fixture.cooldown.recordReleaseCompleted(footA)
         fixture.nowMs += 500L
 
-        assertEquals(3_500L, fixture.cooldown.remainingMs("aa:bb:cc:dd:ee:ff"))
-        assertEquals(3_500L, fixture.cooldown.remainingMs("  AA:BB:CC:DD:EE:FF "))
+        assertEquals(4_500L, fixture.cooldown.remainingMs("aa:bb:cc:dd:ee:ff"))
+        assertEquals(4_500L, fixture.cooldown.remainingMs("  AA:BB:CC:DD:EE:FF "))
     }
 
     @Test fun newerReleaseCompletionResetsDeadline() {
         val fixture = Fixture(nowMs = 1_000L)
         fixture.cooldown.recordReleaseCompleted(footA)
         fixture.nowMs += 2_500L
-        assertEquals(1_500L, fixture.cooldown.remainingMs(footA))
+        assertEquals(2_500L, fixture.cooldown.remainingMs(footA))
 
         fixture.cooldown.recordReleaseCompleted(footA)
 
@@ -98,7 +98,7 @@ class BleInterOperationCooldownTest {
 
         fixture.cooldown.awaitReady(footA)
 
-        assertEquals(listOf(2_800L), fixture.sleeps)
+        assertEquals(listOf(3_800L), fixture.sleeps)
         assertEquals(0L, fixture.cooldown.remainingMs(footA))
     }
 
@@ -128,7 +128,7 @@ class BleInterOperationCooldownTest {
         }
 
         assertFalse(connectStarted)
-        assertEquals(3_500L, cooldown.remainingMs(footA))
+        assertEquals(4_500L, cooldown.remainingMs(footA))
     }
 
     private class Fixture(nowMs: Long) {

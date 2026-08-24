@@ -20,9 +20,9 @@ class BleInterOperationIntegrationSafetyTest {
         source("app/src/main/java/com/onomic/footpilot/LiveConnection.kt")
     }
 
-    @Test fun policyHasOneExplicitFourSecondMonotonicClockSource() {
-        assertTrue(cooldown.contains("const val QUIET_PERIOD_MS = 4_000L"))
-        assertEquals(1, cooldown.count("4_000L"))
+    @Test fun policyHasOneExplicitFiveSecondMonotonicClockSource() {
+        assertTrue(cooldown.contains("const val QUIET_PERIOD_MS = 5_000L"))
+        assertEquals(1, cooldown.count("5_000L"))
         assertTrue(cooldown.contains("SystemClock::elapsedRealtime"))
         assertFalse(cooldown.contains("System.currentTimeMillis"))
     }
@@ -38,7 +38,7 @@ class BleInterOperationIntegrationSafetyTest {
         )
         val footMode = operations.between(
             "private suspend fun <T> withTemporaryFootModeSession(",
-            "private fun modeExecutionPrerequisiteError("
+            "private fun modeMutationPrerequisiteError("
         )
 
         listOf(generic, standby, footMode).forEach { helper ->
@@ -131,7 +131,7 @@ class BleInterOperationIntegrationSafetyTest {
         }
 
         val retryPolicy = source("app/src/main/java/com/onomic/footpilot/BleRetryPolicy.kt")
-        assertTrue(retryPolicy.contains("RETRY_DELAY_MS = 15_000L"))
+        assertTrue(retryPolicy.contains("RETRY_DELAY_MS = 10_000L"))
         assertTrue(retryPolicy.contains("ONE_SHOT_CONTROL_RETRIES = 1"))
     }
 

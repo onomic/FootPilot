@@ -8,8 +8,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FootModeRetryTest {
-    @Test fun modeRetryUsesSharedFifteenSecondCodeSetting() {
-        assertEquals(15, BleRetryPolicy.retryDelaySeconds)
+    @Test fun modeRetryUsesSharedTenSecondCodeSetting() {
+        assertEquals(10, BleRetryPolicy.retryDelaySeconds)
+        assertEquals(1, BleRetryPolicy.ONE_SHOT_CONTROL_RETRIES)
     }
 
     @Test fun transientFailureSchedulesExactlyOneRetryWithoutRealDelay() = runBlocking {
