@@ -715,8 +715,7 @@ object FootOperations {
                     FootModeRepo.failRefresh(target.address, result.message)
                 is FootModeRefreshAttemptResult.Rejected ->
                     FootModeRepo.failRefresh(target.address, result.message)
-                FootModeRefreshAttemptResult.Busy ->
-                    FootModeRepo.failRefresh(target.address, "Another foot action is in progress")
+                FootModeRefreshAttemptResult.Busy -> Unit
                 null -> FootModeRepo.failRefresh(target.address, "Foot mode check stopped")
             }
         } catch (e: CancellationException) {
@@ -731,31 +730,36 @@ object FootOperations {
         ctx: Context,
         target: SelectedFoot
     ): FootModeRefreshAttemptResult {
-        modeMutationPrerequisiteError(ctx, target)?.let {
-            return FootModeRefreshAttemptResult.Rejected(it)
-        }
-        val coordinated = try {
-            BleOperationCoordinator.tryRun(BleOperationKind.FOOT_MODES_REFRESH) {
-                if (SelectedFootRepository.current(ctx)?.address != target.address) {
-                    return@tryRun FootModeRefreshAttemptResult.Rejected("Selected foot changed")
+        return try {
+            FootModeRefreshCoordinatorDefer().run(
+                stillCurrent = {
+                    SelectedFootRepository.selected.value?.address == target.address
                 }
-                val live = LiveConnection.readySession()
-                when {
-                    live != null -> refreshFootModesOnSession(target, live)
-                    !LiveConnection.canUseTemporarySession() ->
-                        FootModeRefreshAttemptResult.TransientFailure(
-                            "Bluetooth connection is not ready"
-                        )
-                    else -> when (val result = withTemporaryFootModeSession(ctx, target) { session ->
-                        refreshFootModesOnSession(target, session)
-                    }) {
-                        is ModeSessionExecution.Success -> result.value
-                        is ModeSessionExecution.Failed -> if (
-                            SelectedFootRepository.current(ctx)?.address != target.address
+            ) {
+                val prerequisiteError = modeMutationPrerequisiteError(ctx, target)
+                if (prerequisiteError != null) {
+                    FootModeRefreshAttemptResult.Rejected(prerequisiteError)
+                } else {
+                    val live = LiveConnection.readySession()
+                    when {
+                        live != null -> refreshFootModesOnSession(target, live)
+                        !LiveConnection.canUseTemporarySession() ->
+                            FootModeRefreshAttemptResult.TransientFailure(
+                                "Bluetooth connection is not ready"
+                            )
+                        else -> when (
+                            val result = withTemporaryFootModeSession(ctx, target) { session ->
+                                refreshFootModesOnSession(target, session)
+                            }
                         ) {
-                            FootModeRefreshAttemptResult.Rejected("Selected foot changed")
-                        } else {
-                            FootModeRefreshAttemptResult.TransientFailure(result.message)
+                            is ModeSessionExecution.Success -> result.value
+                            is ModeSessionExecution.Failed -> if (
+                                SelectedFootRepository.current(ctx)?.address != target.address
+                            ) {
+                                FootModeRefreshAttemptResult.Rejected("Selected foot changed")
+                            } else {
+                                FootModeRefreshAttemptResult.TransientFailure(result.message)
+                            }
                         }
                     }
                 }
@@ -763,13 +767,9 @@ object FootOperations {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            return FootModeRefreshAttemptResult.TransientFailure(
+            FootModeRefreshAttemptResult.TransientFailure(
                 e.message ?: "Foot mode check failed"
             )
-        }
-        return when (coordinated) {
-            is CoordinatedResult.Completed -> coordinated.value
-            CoordinatedResult.Busy -> FootModeRefreshAttemptResult.Busy
         }
     }
 

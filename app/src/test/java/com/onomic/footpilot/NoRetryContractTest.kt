@@ -46,6 +46,9 @@ class NoRetryContractTest {
         val retry = source(
             "app/src/main/java/com/onomic/footpilot/FootModeRefreshRetry.kt"
         )
+        val defer = source(
+            "app/src/main/java/com/onomic/footpilot/FootModeRefreshCoordinatorDefer.kt"
+        )
 
         assertTrue(refresh.contains("FootModeRefreshOneShotRetry"))
         assertFalse(refresh.contains("FootModeOneShotRetry"))
@@ -53,6 +56,12 @@ class NoRetryContractTest {
         assertTrue(retry.contains("LiveRetryCountdown()"))
         assertTrue(retry.contains("BleRetryPolicy.ONE_SHOT_CONTROL_RETRIES"))
         assertTrue(retry.contains("countdown.awaitRetry"))
+        assertTrue(retry.contains("fun isRetryable(): Boolean = this is TransientFailure"))
+        assertFalse(defer.contains("LiveRetryCountdown"))
+        assertFalse(defer.contains("BleRetryPolicy"))
+        assertFalse(defer.contains("beginRefreshRetry"))
+        assertFalse(defer.contains("runQueued"))
+        assertFalse(defer.contains("delay("))
     }
 
     @Test fun finePresetAndAutoPathsContainNoAutomaticCommandRunner() {
@@ -94,6 +103,7 @@ class NoRetryContractTest {
             "app/src/main/java/com/onomic/footpilot/LiveRetry.kt",
             "app/src/main/java/com/onomic/footpilot/LiveConnection.kt",
             "app/src/main/java/com/onomic/footpilot/FootModeRefreshRetry.kt",
+            "app/src/main/java/com/onomic/footpilot/FootModeRefreshCoordinatorDefer.kt",
             "app/src/main/java/com/onomic/footpilot/FootModeRetry.kt",
             "app/src/main/java/com/onomic/footpilot/StandbyRetry.kt",
             "app/src/main/java/com/onomic/footpilot/FootOperations.kt"

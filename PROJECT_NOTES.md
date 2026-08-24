@@ -562,6 +562,10 @@ available in Android's notification framework.
 - Commands on an already-ready persistent live session are reused immediately and are not delayed.
 - Automatic Settings Foot Modes refresh remains read-only and retries once after a transient failure;
   its inline countdown uses `LiveRetryCountdown` and the shared `BleRetryPolicy`.
+- Automatic Settings Foot Modes refresh treats coordinator Busy as a silent defer rather than a BLE
+  failure. It waits for coordinator availability without consuming the one-shot 10-second retry
+  budget, then still respects the 5-second inter-session quiet period before a temporary GATT.
+  Actual device-control Busy behavior is unchanged.
 - A verified Standby OFF re-queries an unconfirmed ankle on the same GATT session before temporary
   release (or while retaining the ready persistent session).
 - Successful ankle re-verification restores current ankle confirmation without Check Now. A failed

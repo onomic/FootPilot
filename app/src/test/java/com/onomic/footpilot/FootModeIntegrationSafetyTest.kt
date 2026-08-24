@@ -51,6 +51,9 @@ class FootModeIntegrationSafetyTest {
 
     @Test fun everyRefreshAttemptResolvesReadyOrTemporarySessionFresh() {
         val source = source("app/src/main/java/com/onomic/footpilot/FootOperations.kt")
+        val defer = source(
+            "app/src/main/java/com/onomic/footpilot/FootModeRefreshCoordinatorDefer.kt"
+        )
         val refresh = source.substringAfter("private suspend fun refreshFootModes(")
             .substringBefore("private suspend fun runFootModeIntent(")
         val attempt = refresh.substringAfter("private suspend fun performFootModeRefreshAttempt(")
@@ -59,7 +62,8 @@ class FootModeIntegrationSafetyTest {
         assertTrue(refresh.contains("FootModeRefreshOneShotRetry"))
         assertTrue(refresh.contains("attempt = {"))
         assertTrue(refresh.contains("performFootModeRefreshAttempt(ctx, target)"))
-        assertTrue(attempt.contains("BleOperationCoordinator.tryRun"))
+        assertTrue(attempt.contains("FootModeRefreshCoordinatorDefer().run"))
+        assertTrue(defer.contains("BleOperationCoordinator.tryRun"))
         assertTrue(attempt.contains("LiveConnection.readySession()"))
         assertTrue(attempt.contains("!LiveConnection.canUseTemporarySession()"))
         assertTrue(attempt.contains("withTemporaryFootModeSession(ctx, target)"))
@@ -70,9 +74,29 @@ class FootModeIntegrationSafetyTest {
         assertFalse(refresh.contains("changeStandby"))
     }
 
+    @Test fun coordinatorBusyUsesStateFlowDeferWithoutQueueRetryOrPresentationSideEffects() {
+        val operations = source("app/src/main/java/com/onomic/footpilot/FootOperations.kt")
+        val defer = source(
+            "app/src/main/java/com/onomic/footpilot/FootModeRefreshCoordinatorDefer.kt"
+        )
+        val refresh = operations.substringAfter("private suspend fun refreshFootModes(")
+            .substringBefore("private suspend fun runFootModeIntent(")
+
+        assertTrue(defer.contains("BleOperationCoordinator.tryRun"))
+        assertTrue(defer.contains("BleOperationCoordinator.state.first { !it.isBusy }"))
+        assertTrue(defer.contains("CoordinatedResult.Busy"))
+        assertFalse(defer.contains("runQueued"))
+        assertFalse(defer.contains("delay("))
+        assertFalse(defer.contains("LiveRetryCountdown"))
+        assertFalse(defer.contains("BleRetryPolicy"))
+        assertFalse(defer.contains("FootModeRepo"))
+        assertFalse(refresh.contains("Another foot action is in progress"))
+    }
+
     @Test fun modeRetriesHaveNoIndependentDelayLiteral() {
         val source = source("app/src/main/java/com/onomic/footpilot/FootModeRetry.kt") +
-            source("app/src/main/java/com/onomic/footpilot/FootModeRefreshRetry.kt")
+            source("app/src/main/java/com/onomic/footpilot/FootModeRefreshRetry.kt") +
+            source("app/src/main/java/com/onomic/footpilot/FootModeRefreshCoordinatorDefer.kt")
 
         assertTrue(source.contains("LiveRetryCountdown"))
         assertFalse(source.contains("15_000"))
